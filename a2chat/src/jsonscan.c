@@ -273,28 +273,23 @@ unsigned json_escape_len(const char *s, unsigned n)
 static const char TOOLS_JSON[] =
     "\"tools\":["
     "{\"type\":\"function\",\"function\":{\"name\":\"list_dir\","
-    "\"description\":\"List one ProDOS directory under PREFIX (no recurse)\","
     "\"parameters\":{\"type\":\"object\",\"properties\":{"
     "\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}},"
     "{\"type\":\"function\",\"function\":{\"name\":\"read_file\","
-    "\"description\":\"Read a ProDOS file; use offset to page\","
     "\"parameters\":{\"type\":\"object\",\"properties\":{"
     "\"path\":{\"type\":\"string\"},"
     "\"offset\":{\"type\":\"integer\"},"
     "\"length\":{\"type\":\"integer\"}},\"required\":[\"path\"]}}},"
     "{\"type\":\"function\",\"function\":{\"name\":\"write_file\","
-    "\"description\":\"Write a ProDOS file under PREFIX. type TXT, BAS, or BIN. Use this instead of printing a whole program.\","
     "\"parameters\":{\"type\":\"object\",\"properties\":{"
     "\"path\":{\"type\":\"string\"},"
     "\"content\":{\"type\":\"string\"},"
     "\"type\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"]}}},"
     "{\"type\":\"function\",\"function\":{\"name\":\"create_bin\","
-    "\"description\":\"Write a BIN/SYS file from hex bytes; auxtype is the load address\","
     "\"parameters\":{\"type\":\"object\",\"properties\":{"
     "\"path\":{\"type\":\"string\"},"
     "\"hex\":{\"type\":\"string\"},"
-    "\"type\":{\"type\":\"string\"},"
-    "\"auxtype\":{\"type\":\"integer\"}},\"required\":[\"path\",\"hex\"]}}}]";
+    "\"type\":{\"type\":\"string\"}},\"required\":[\"path\",\"hex\"]}}}]";
 #ifndef A2CHAT_HOST
 #pragma rodata-name ("RODATA")
 #endif

@@ -338,3 +338,14 @@ char ui_getc(void)
 {
     return cgetc();
 }
+
+void ui_exit(void)
+{
+    ui_flush();
+    PAGE2_OFF = 0;
+    revers(0);
+    cursor(1);
+    videomode(VIDEOMODE_40COL);
+    clrscr();
+    __asm__("bit $C082");
+}

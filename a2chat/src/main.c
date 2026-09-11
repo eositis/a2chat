@@ -115,5 +115,6 @@ int main(int argc, char *argv[])
         ollama_send(line, 0);
     }
     net_shutdown();
+    ui_exit();
     return 0;
 }

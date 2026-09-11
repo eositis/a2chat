@@ -24,6 +24,81 @@ static const char *basename_path(const char *path)
     return s ? s + 1 : path;
 }
 
+/* ProDOS 8 leaf: 1–15 chars, starts with A–Z, then A–Z / 0–9 / one '.'. */
+void prodos_leaf_name(char *dst, const char *in)
+{
+    const char *s;
+    char base[16];
+    char ext[4];
+    unsigned bn = 0;
+    unsigned en = 0;
+    unsigned i;
+    const char *dot = 0;
+
+    if (in) {
+        s = basename_path(in);
+    } else {
+        s = "FILE";
+    }
+    dst[0] = 0;
+    for (i = 0; s[i]; i++) {
+        if (s[i] == '.') {
+            dot = s + i;
+        }
+    }
+    while (*s && *s != '.') {
+        char c = *s++;
+        if (c >= 'a' && c <= 'z') {
+            c = (char)(c - 32);
+        }
+        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+            if (bn < 15) {
+                base[bn++] = c;
+            }
+        }
+    }
+    if (dot && dot[1]) {
+        s = dot + 1;
+        while (*s && en < 3) {
+            char c = *s++;
+            if (c >= 'a' && c <= 'z') {
+                c = (char)(c - 32);
+            }
+            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+                ext[en++] = c;
+            }
+        }
+    }
+    if (!bn) {
+        base[bn++] = 'F';
+        base[bn++] = 'I';
+        base[bn++] = 'L';
+        base[bn++] = 'E';
+    }
+    if (base[0] >= '0' && base[0] <= '9') {
+        if (bn > 14) {
+            bn = 14;
+        }
+        memmove(base + 1, base, bn);
+        base[0] = 'F';
+        bn++;
+    }
+    if (en && bn + 1 + en > 15) {
+        bn = (unsigned)(15 - 1 - en);
+        if (!bn) {
+            bn = 1;
+            en = 13;
+        }
+    }
+    memcpy(dst, base, bn);
+    if (en) {
+        dst[bn++] = '.';
+        memcpy(dst + bn, ext, en);
+        bn += en;
+    }
+    dst[bn] = 0;
+}
+
 static int path_has_prefix(const char *path, const char *pfx)
 {
     unsigned i;
@@ -65,8 +140,11 @@ int path_in_workspace(const char *path)
 
 void path_join_prefix(char *dst, const char *in)
 {
-    const char *use = in;
-    if (!use || !use[0] || (use[0] == '.' && use[1] == 0)) {
+    char leaf[16];
+    const char *prebase;
+    size_t n;
+
+    if (!in || !in[0] || (in[0] == '.' && in[1] == 0)) {
         if (g_cfg.prefix[0]) {
             strncpy(dst, g_cfg.prefix, A2CHAT_PATH_MAX - 1);
             dst[A2CHAT_PATH_MAX - 1] = 0;
@@ -76,18 +154,12 @@ void path_join_prefix(char *dst, const char *in)
         dst[1] = 0;
         return;
     }
-    if (g_cfg.prefix[0] && use[0] == '/' && !path_has_prefix(use, g_cfg.prefix)) {
-        /* Model invented another volume; keep only the file name under PREFIX. */
-        strncpy(iobuf, basename_path(use), sizeof(iobuf) - 1);
-        iobuf[sizeof(iobuf) - 1] = 0;
-        use = iobuf;
-    } else if (use[0] == '/') {
-        strncpy(dst, use, A2CHAT_PATH_MAX - 1);
-        dst[A2CHAT_PATH_MAX - 1] = 0;
-        return;
-    }
+    prodos_leaf_name(leaf, in);
     if (g_cfg.prefix[0]) {
-        size_t n = strlen(g_cfg.prefix);
+        prebase = basename_path(g_cfg.prefix);
+        if (!strcmp(leaf, prebase)) {
+            strcpy(leaf, "NOTE.MD");
+        }
         strncpy(dst, g_cfg.prefix, A2CHAT_PATH_MAX - 1);
         dst[A2CHAT_PATH_MAX - 1] = 0;
         n = strlen(dst);
@@ -95,10 +167,10 @@ void path_join_prefix(char *dst, const char *in)
             dst[n++] = '/';
             dst[n] = 0;
         }
-        strncat(dst, use, A2CHAT_PATH_MAX - 1 - strlen(dst));
+        strncat(dst, leaf, A2CHAT_PATH_MAX - 1 - strlen(dst));
         return;
     }
-    strncpy(dst, use, A2CHAT_PATH_MAX - 1);
+    strncpy(dst, leaf, A2CHAT_PATH_MAX - 1);
     dst[A2CHAT_PATH_MAX - 1] = 0;
 }
 
@@ -108,23 +180,27 @@ int prodos_list(const char *path, char *out, unsigned outsz)
     struct dirent *ent;
     unsigned used = 0;
     unsigned count = 0;
-    static char cwd[64];
     const char *p = path;
 
     out[0] = 0;
-    if (!p || !p[0] || (p[0] == '.' && p[1] == 0)) {
-        if (g_cfg.prefix[0]) {
-            p = g_cfg.prefix;
-        } else if (*getcwd(cwd, sizeof(cwd))) {
-            p = cwd;
-        } else {
-            p = ".";
+    if (!p || !p[0] || (p[0] == '.' && p[1] == 0) ||
+        (g_cfg.prefix[0] && path_has_prefix(p, g_cfg.prefix) &&
+         p[strlen(g_cfg.prefix)] == 0)) {
+        d = opendir(".");
+        if (!d && g_cfg.prefix[0]) {
+            d = opendir((char *)g_cfg.prefix);
         }
+        if (!d) {
+            p = ".";
+        } else {
+            p = 0;
+        }
+    } else {
+        d = opendir((char *)p);
     }
-    d = opendir((char *)p);
     if (!d) {
         strncpy(out, "cannot open ", outsz - 1);
-        strncat(out, p, outsz - strlen(out) - 1);
+        strncat(out, p ? (char *)p : ".", outsz - strlen(out) - 1);
         return -1;
     }
     while ((ent = readdir(d)) != NULL && count < A2CHAT_DIR_MAX) {

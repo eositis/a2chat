@@ -121,6 +121,7 @@ int ui_aborted(void);
 void ui_redraw_chrome(void);
 void ui_label(const char *s);
 void ui_clear_chat(void);
+void ui_exit(void);
 
 uint8_t slot_resolve(uint8_t configured);
 int net_init(uint8_t slot);
@@ -155,6 +156,7 @@ int prodos_read_to_aux(const char *path, unsigned offset, unsigned length,
 int path_allowed_write(const char *path);
 int path_in_workspace(const char *path);
 void path_join_prefix(char *dst, const char *in);
+void prodos_leaf_name(char *dst, const char *in);
 unsigned est_secs_write(unsigned bytes);
 
 int ollama_send(const char *user_text, const char *attach_path);
