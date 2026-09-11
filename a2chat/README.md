@@ -1,6 +1,10 @@
 # A2CHAT
 
-Native **ProDOS 8** chat client for an enhanced **Apple IIe** or **Apple IIc** with **Uthernet II** (WIZnet W5100). It talks **HTTP directly** to [Ollama](https://ollama.com) on the LAN, streams replies in 80-column text, and can list/read/write ProDOS files after you confirm writes.
+Native **ProDOS 8** chat client for an enhanced **Apple IIe** or **Apple IIc** with **Uthernet II** (WIZnet W5100). It talks **HTTP directly** to [Ollama](https://ollama.com) on the LAN, streams replies in 80-column text, and can save notes or listings onto a ProDOS volume.
+
+**Using it on the Apple:** see **[USERGUIDE.md](USERGUIDE.md)** (hardware, disk install, config, commands, saving files, troubleshooting).
+
+This file is the build and developer overview.
 
 ## Hardware
 
@@ -77,14 +81,6 @@ Disk is slow (~11 KB/s write, ~22 KB/s read on a 32 MB volume). Chat I/O stays u
 - **Virtual ][** on macOS can attach Uthernet II.
 
 Use a static `IP=` on the same subnet as the emulator NIC if DHCP is awkward.
-
-## Keys and commands
-
-Slash commands: `/config` `/ping` `/read PATH` `/cat [PATH]` `/model NAME` `/new` `/save PATH` `/quit`.
-
-Text `write_file` under `PREFIX` is saved without a Y/N prompt (session workspace). `create_bin` and BIN/SYS writes still ask **Y/N/E**. Writes from the model to other volumes also prompt.
-
-Generated `BIN`/`SYS` files are run at your own risk. There is no on-machine assembler.
 
 ## License notes
 
