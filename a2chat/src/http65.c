@@ -15,7 +15,7 @@
 
 #define TCP_MAX 1460
 #define HTTP_TX_MAX A2CHAT_AUX_POST_MAX
-#define BOUNCE 256
+#define BOUNCE 512
 
 static unsigned char bounce[BOUNCE];
 static char hdr[192];
@@ -339,15 +339,24 @@ int http_post_file(uint32_t addr, uint16_t port, const char *url_path,
     }
 
     rx_reset(on_byte, user, 0, 0);
-    if (tcp_connect(addr, port, on_tcp)) {
-        send_fail("TCP connect");
-        return -1;
-    }
-    ui_status("POST /api/chat ...");
-    if (send_aux(total) < 0) {
-        tcp_close();
-        send_fail("send body");
-        return -1;
+    {
+        uint8_t tries;
+
+        for (tries = 0; tries < 3; tries++) {
+            if (tcp_connect(addr, port, on_tcp)) {
+                send_fail("TCP connect");
+                return -1;
+            }
+            ui_status("POST /api/chat ...");
+            if (send_aux(total) == 0) {
+                break;
+            }
+            tcp_close();
+            if (tries == 2) {
+                send_fail("send body");
+                return -1;
+            }
+        }
     }
     if (user) {
         struct jsonscan *js = (struct jsonscan *)user;

@@ -8,9 +8,9 @@
 #include <ip65.h>
 
 #define CHROME_TOP 0
-#define CHAT_TOP 2
+#define CHAT_TOP 1
 #define CHAT_BOT 20
-#define INPUT_ROW 22
+#define INPUT_ROW 21
 #define HELP_ROW 23
 
 #define STORE80_ON  (*(volatile unsigned char *)0xC001)
@@ -19,9 +19,62 @@
 
 static uint8_t chat_y = CHAT_TOP;
 static uint8_t chat_x = 0;
+static char outbuf[16];
+static uint8_t outn;
 
 uint8_t g_slot;
 char g_status[81];
+
+void ui_clear_chat(void);
+
+static unsigned text_base(uint8_t row)
+{
+    return 0x400u + (unsigned)((row & 7) * 0x80 + (row >> 3) * 40);
+}
+
+static unsigned char glyph(char ch, uint8_t inverse)
+{
+    unsigned char c = (unsigned char)ch & 0x7f;
+
+    if (c < 32) {
+        c = ' ';
+    }
+    if (inverse) {
+        if (c >= 'a' && c <= 'z') {
+            c = (unsigned char)(c - 32);
+        }
+        return (unsigned char)(c & 0x3f);
+    }
+    return (unsigned char)(c | 0x80);
+}
+
+static void chat_blit(uint8_t col, uint8_t row, const char *s, uint8_t n,
+                      uint8_t inverse)
+{
+    unsigned base;
+    uint8_t i;
+
+    if (!n) {
+        return;
+    }
+    base = text_base(row);
+    STORE80_ON = 0;
+    /* One aux pass (even cols), one main pass (odd cols). */
+    PAGE2_ON = 0;
+    for (i = 0; i < n; i++) {
+        if (((col + i) & 1) == 0) {
+            *(volatile unsigned char *)(unsigned)(base + ((col + i) >> 1)) =
+                glyph(s[i], inverse);
+        }
+    }
+    PAGE2_OFF = 0;
+    for (i = 0; i < n; i++) {
+        if ((col + i) & 1) {
+            *(volatile unsigned char *)(unsigned)(base + ((col + i) >> 1)) =
+                glyph(s[i], inverse);
+        }
+    }
+}
 
 static int open_apple_down(void)
 {
@@ -43,39 +96,6 @@ int ui_aborted(void)
         }
     }
     return 0;
-}
-
-static unsigned text_base(uint8_t row)
-{
-    return 0x400u + (unsigned)((row & 7) * 0x80 + (row >> 3) * 40);
-}
-
-static void chat_plot(uint8_t col, uint8_t row, char ch, uint8_t inverse)
-{
-    unsigned char c = (unsigned char)ch & 0x7f;
-    unsigned addr;
-
-    if (c < 32) {
-        c = ' ';
-    }
-    if (inverse) {
-        if (c >= 'a' && c <= 'z') {
-            c = (unsigned char)(c - 32);
-        }
-        c = (unsigned char)(c & 0x3f);
-    } else {
-        c = (unsigned char)(c | 0x80);
-    }
-    addr = text_base(row) + (col >> 1);
-    STORE80_ON = 0;
-    /* IIe 80-col: even columns in aux, odd in main. */
-    if (col & 1) {
-        PAGE2_OFF = 0;
-    } else {
-        PAGE2_ON = 0;
-    }
-    *(volatile unsigned char *)(unsigned)addr = c;
-    PAGE2_OFF = 0;
 }
 
 static void chat_clear_line(uint8_t row)
@@ -107,12 +127,11 @@ void ui_redraw_chrome(void)
     cputs(line);
     cclear(80 - (unsigned char)strlen(line));
     revers(0);
-    gotoxy(0, 1);
-    chline(80);
-    gotoxy(0, 21);
-    chline(80);
     gotoxy(0, HELP_ROW);
-    cputs("OA-C cfg  /ping  /cat /new /model  ESC abort  OA-Q quit");
+    revers(1);
+    cputs("/config /ping /cat /new /model /read /save /quit");
+    cclear((unsigned char)(80 - strlen("/config /ping /cat /new /model /read /save /quit")));
+    revers(0);
 }
 
 void ui_init(void)
@@ -122,7 +141,21 @@ void ui_init(void)
     cursor(1);
     chat_y = CHAT_TOP;
     chat_x = 0;
+    outn = 0;
     ui_redraw_chrome();
+    ui_clear_chat();
+}
+
+void ui_clear_chat(void)
+{
+    uint8_t r;
+
+    outn = 0;
+    chat_x = 0;
+    chat_y = CHAT_TOP;
+    for (r = CHAT_TOP; r <= CHAT_BOT; r++) {
+        chat_clear_line(r);
+    }
 }
 
 void ui_status(const char *msg)
@@ -136,8 +169,44 @@ void ui_status(const char *msg)
     revers(0);
 }
 
+void ui_flush(void)
+{
+    while (outn) {
+        uint8_t room = (uint8_t)(80 - chat_x);
+        uint8_t n;
+
+        if (room == 0) {
+            chat_x = 0;
+            if (chat_y < CHAT_BOT) {
+                chat_y++;
+            } else {
+                chat_y = CHAT_TOP;
+            }
+            chat_clear_line(chat_y);
+            room = 80;
+        }
+        n = outn < room ? outn : room;
+        chat_blit(chat_x, chat_y, outbuf, n, 0);
+        chat_x = (uint8_t)(chat_x + n);
+        outn = (uint8_t)(outn - n);
+        if (outn) {
+            memmove(outbuf, outbuf + n, outn);
+        }
+        if (chat_x >= 80) {
+            chat_x = 0;
+            if (chat_y < CHAT_BOT) {
+                chat_y++;
+            } else {
+                chat_y = CHAT_TOP;
+            }
+            chat_clear_line(chat_y);
+        }
+    }
+}
+
 void ui_nl(void)
 {
+    ui_flush();
     chat_x = 0;
     if (chat_y < CHAT_BOT) {
         chat_y++;
@@ -149,34 +218,38 @@ void ui_nl(void)
 
 void ui_label(const char *s)
 {
+    uint8_t n;
+
+    ui_flush();
     if (chat_x != 0) {
         ui_nl();
     }
-    while (*s) {
-        chat_plot(chat_x, chat_y, *s, 1);
-        chat_x++;
-        s++;
-        if (chat_x >= 80) {
-            ui_nl();
-        }
+    n = (uint8_t)strlen(s);
+    if (n) {
+        chat_blit(0, chat_y, s, n, 1);
+        chat_x = n;
     }
-    chat_plot(chat_x, chat_y, ' ', 0);
+    outbuf[0] = ' ';
+    chat_blit(chat_x, chat_y, outbuf, 1, 0);
     chat_x++;
 }
 
 void ui_print_ch(char ch)
 {
     if (ch == '\n' || ch == '\r') {
+        ui_flush();
         ui_nl();
         return;
     }
     if (ch == '\t') {
         ch = ' ';
     }
-    chat_plot(chat_x, chat_y, ch, 0);
-    chat_x++;
-    if (chat_x >= 80) {
-        ui_nl();
+    if (chat_x + outn >= 80) {
+        ui_flush();
+    }
+    outbuf[outn++] = ch;
+    if (outn >= sizeof(outbuf) || ch == ' ') {
+        ui_flush();
     }
 }
 
@@ -185,12 +258,16 @@ void ui_print(const char *s)
     while (*s) {
         ui_print_ch(*s++);
     }
+    ui_flush();
 }
 
 void ui_prompt(char *buf, uint8_t maxlen)
 {
     uint8_t n = 0;
+    ui_flush();
     gotoxy(0, INPUT_ROW);
+    cclear(80);
+    gotoxy(0, INPUT_ROW + 1);
     cclear(80);
     gotoxy(0, INPUT_ROW);
     cputs("> ");
@@ -204,9 +281,17 @@ void ui_prompt(char *buf, uint8_t maxlen)
             if (n) {
                 n--;
                 buf[n] = 0;
-                gotoxy((unsigned char)(2 + n), INPUT_ROW);
+                if (n < 78) {
+                    gotoxy((unsigned char)(2 + n), INPUT_ROW);
+                } else {
+                    gotoxy((unsigned char)(n - 78), INPUT_ROW + 1);
+                }
                 cputc(' ');
-                gotoxy((unsigned char)(2 + n), INPUT_ROW);
+                if (n < 78) {
+                    gotoxy((unsigned char)(2 + n), INPUT_ROW);
+                } else {
+                    gotoxy((unsigned char)(n - 78), INPUT_ROW + 1);
+                }
             }
             continue;
         }
@@ -217,6 +302,9 @@ void ui_prompt(char *buf, uint8_t maxlen)
         if ((unsigned char)c >= 32 && n + 1 < maxlen) {
             buf[n++] = c;
             buf[n] = 0;
+            if (n == 79) {
+                gotoxy(0, INPUT_ROW + 1);
+            }
             cputc(c);
         }
     }
@@ -229,6 +317,8 @@ int ui_confirm(const char *path, const char *kind, unsigned bytes)
     char c;
 
     gotoxy(0, INPUT_ROW);
+    cclear(80);
+    gotoxy(0, INPUT_ROW + 1);
     cclear(80);
     gotoxy(0, INPUT_ROW);
     sprintf(line, "[%s %s  %u bytes ~%us] Y/N/E?", kind, path, bytes, sec);

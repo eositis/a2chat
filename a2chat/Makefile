@@ -40,8 +40,8 @@ A2CHAT.SYSTEM: a2chat.bin
 host-test: tests/test_host
 	./tests/test_host
 
-tests/test_host: tests/test_host.c src/jsonscan.c src/config.c src/a2chat.h
-	gcc -std=c99 -Wall -Wextra -DA2CHAT_HOST -Isrc -o $@ tests/test_host.c src/jsonscan.c src/config.c
+tests/test_host: tests/test_host.c src/jsonscan.c src/config.c src/bas.c src/a2chat.h
+	gcc -std=c99 -Wall -Wextra -DA2CHAT_HOST -Isrc -o $@ tests/test_host.c src/jsonscan.c src/config.c src/bas.c
 
 disk: a2chat.po
 

@@ -7,7 +7,7 @@
 #include <stddef.h>
 
 #define A2CHAT_PATH_MAX 64
-#define A2CHAT_LINE_MAX 80
+#define A2CHAT_LINE_MAX 159
 #define A2CHAT_TOOL_NAME_MAX 16
 #define A2CHAT_DIR_MAX 64
 #define A2CHAT_MODEL_MAX 32
@@ -99,12 +99,20 @@ void json_write_prelude(FILE *f, const char *model);
 void json_write_tools(FILE *f);
 void json_write_epilogue(FILE *f);
 
+int bas_tokenize(FILE *in, FILE *out);
+int bas_detokenize(FILE *in, FILE *out);
+int bas_header_is_tokenized(const unsigned char *b, unsigned n);
+#ifndef A2CHAT_HOST
+int bas_detokenize_aux(FILE *in, unsigned max, unsigned *got);
+#endif
+
 #ifndef A2CHAT_HOST
 
 void ui_init(void);
 void ui_status(const char *msg);
 void ui_print(const char *s);
 void ui_print_ch(char ch);
+void ui_flush(void);
 void ui_nl(void);
 void ui_prompt(char *buf, uint8_t maxlen);
 int ui_confirm(const char *path, const char *kind, unsigned bytes);
@@ -112,6 +120,7 @@ char ui_getc(void);
 int ui_aborted(void);
 void ui_redraw_chrome(void);
 void ui_label(const char *s);
+void ui_clear_chat(void);
 
 uint8_t slot_resolve(uint8_t configured);
 int net_init(uint8_t slot);
@@ -136,18 +145,17 @@ void hist_new(void);
 long hist_size(void);
 
 int prodos_list(const char *path, char *out, unsigned outsz);
-int prodos_read(const char *path, unsigned offset, unsigned length,
-                char *out, unsigned outsz, unsigned *got, int as_hex);
-int prodos_write_text(const char *path, const char *data, unsigned len, int exempt);
 int prodos_write_file(const char *path, const char *src_path, uint8_t ptype,
                       unsigned auxtype, int exempt);
 int prodos_write_hex_file(const char *path, const char *hex_path, uint8_t ptype,
                           unsigned auxtype, int exempt);
+int prodos_write_bas(const char *path, const char *src_path, int exempt);
+int prodos_read_to_aux(const char *path, unsigned offset, unsigned length,
+                       unsigned *got, int as_hex);
 int path_allowed_write(const char *path);
 int path_in_workspace(const char *path);
 void path_join_prefix(char *dst, const char *in);
 unsigned est_secs_write(unsigned bytes);
-unsigned est_secs_read(unsigned bytes);
 
 int ollama_send(const char *user_text, const char *attach_path);
 int cmd_handle(char *line);

@@ -240,9 +240,9 @@ int hist_write_messages(FILE *body)
             break;
         }
         len = (uint16_t)(lo | (hi << 8));
-        /* Replay user and assistant turns. Skip tool dumps and the old
+        /* Replay user, assistant, and tool results. Skip old
          * "(streamed)" markers that had no real reply text. */
-        emit = ((t == 'U' || t == 'A') && pos >= start);
+        emit = ((t == 'U' || t == 'A' || t == 'T') && pos >= start);
         pos += 3 + (long)len;
         if (t == 'A' && len == 10) {
             if (fread(iobuf, 1, 10, f) != 10) {
@@ -266,8 +266,13 @@ int hist_write_messages(FILE *body)
             continue;
         }
         fputc(',', body);
-        fputs(t == 'A' ? "{\"role\":\"assistant\",\"content\":\""
-                       : "{\"role\":\"user\",\"content\":\"", body);
+        if (t == 'A') {
+            fputs("{\"role\":\"assistant\",\"content\":\"", body);
+        } else if (t == 'T') {
+            fputs("{\"role\":\"user\",\"content\":\"TOOL: ", body);
+        } else {
+            fputs("{\"role\":\"user\",\"content\":\"", body);
+        }
         left = len;
         while (left) {
             uint16_t n = left;

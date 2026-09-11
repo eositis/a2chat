@@ -128,6 +128,44 @@ int main(void)
             return 1;
         }
     }
+    {
+        FILE *in = fopen("fixtures/hi.bas.txt", "wb");
+        FILE *tok;
+        FILE *out;
+        char listing[80];
+
+        assert(in);
+        fputs("10 PRINT \"HI\"\n20 END\n", in);
+        fclose(in);
+        in = fopen("fixtures/hi.bas.txt", "rb");
+        tok = fopen("fixtures/hi.tok", "wb");
+        assert(in && tok);
+        if (bas_tokenize(in, tok) != 0) {
+            fprintf(stderr, "tokenize fail\n");
+            return 1;
+        }
+        fclose(in);
+        fclose(tok);
+        tok = fopen("fixtures/hi.tok", "rb");
+        out = fopen("fixtures/hi.list", "wb");
+        assert(tok && out);
+        if (bas_detokenize(tok, out) != 0) {
+            fprintf(stderr, "detokenize fail\n");
+            return 1;
+        }
+        fclose(tok);
+        fclose(out);
+        in = fopen("fixtures/hi.list", "rb");
+        assert(in);
+        memset(listing, 0, sizeof(listing));
+        fread(listing, 1, sizeof(listing) - 1, in);
+        fclose(in);
+        if (!strstr(listing, "PRINT") || !strstr(listing, "HI") ||
+            !strstr(listing, "20 END")) {
+            fprintf(stderr, "roundtrip got '%s'\n", listing);
+            return 1;
+        }
+    }
 
     puts("host tests ok");
     return 0;
