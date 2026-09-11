@@ -1,0 +1,3 @@
+{"model":"x","message":{"role":"assistant","content":"Hello"},"done":false}
+{"model":"x","message":{"role":"assistant","content":" world"},"done":false}
+{"model":"x","message":{"role":"assistant","content":""},"done":true}

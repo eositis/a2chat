@@ -1,0 +1,404 @@
+/******************************************************************************
+ * HTTP/1.0 over IP65 software TCP (same path as telnet65 / test/tcp.c).
+ * wget65's W5100 on-chip TCP is not used: w5100_config() leaves MACRAW,
+ * which is what IP65 needs for tcp_connect.
+ ******************************************************************************/
+
+#pragma static-locals (on)
+
+#include "a2chat.h"
+#include <ip65.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+
+#define TCP_MAX 1460
+#define HTTP_TX_MAX A2CHAT_AUX_POST_MAX
+#define BOUNCE 256
+
+static unsigned char bounce[BOUNCE];
+static char hdr[192];
+
+static uint8_t rx_eof;
+static uint8_t rx_have_hdr;
+static uint8_t rx_chunked;
+static uint8_t rx_chunk_st;
+static uint16_t rx_chunk_left;
+static uint16_t rx_hlen;
+static uint16_t rx_accum_len;
+static uint16_t rx_accum_max;
+static char rx_hdr[160];
+static char rx_hex[8];
+static uint8_t rx_hexn;
+static void (*rx_on_byte)(char ch, void *user);
+static void *rx_user;
+static char *rx_accum;
+
+static int http_status_code(const char *hdr)
+{
+    const char *p = hdr;
+
+    while (*p && *p != ' ') {
+        ++p;
+    }
+    while (*p == ' ') {
+        ++p;
+    }
+    return atoi(p);
+}
+
+static void feed_body(char ch)
+{
+    if (!rx_chunked) {
+        if (rx_on_byte) {
+            rx_on_byte(ch, rx_user);
+        }
+        if (rx_accum && rx_accum_len < rx_accum_max - 1) {
+            rx_accum[rx_accum_len++] = ch;
+            rx_accum[rx_accum_len] = 0;
+        }
+        return;
+    }
+    if (rx_chunk_st == 0) {
+        if (ch == '\r') {
+            return;
+        }
+        if (ch == '\n') {
+            uint16_t v = 0;
+            uint8_t k;
+
+            rx_hex[rx_hexn] = 0;
+            for (k = 0; k < rx_hexn; k++) {
+                char h = (char)tolower((unsigned char)rx_hex[k]);
+                v <<= 4;
+                if (h >= '0' && h <= '9') {
+                    v |= (uint16_t)(h - '0');
+                } else if (h >= 'a' && h <= 'f') {
+                    v |= (uint16_t)(h - 'a' + 10);
+                }
+            }
+            rx_hexn = 0;
+            if (v == 0) {
+                rx_eof = 1;
+                return;
+            }
+            rx_chunk_left = v;
+            rx_chunk_st = 1;
+            return;
+        }
+        if (rx_hexn < 7 && isxdigit((unsigned char)ch)) {
+            rx_hex[rx_hexn++] = ch;
+        }
+        return;
+    }
+    if (rx_chunk_st == 1) {
+        if (rx_on_byte) {
+            rx_on_byte(ch, rx_user);
+        }
+        if (rx_accum && rx_accum_len < rx_accum_max - 1) {
+            rx_accum[rx_accum_len++] = ch;
+            rx_accum[rx_accum_len] = 0;
+        }
+        rx_chunk_left--;
+        if (rx_chunk_left == 0) {
+            rx_chunk_st = 2;
+        }
+        return;
+    }
+    if (ch == '\n') {
+        rx_chunk_st = 0;
+    }
+}
+
+static uint16_t rx_last;
+
+static void __fastcall__ on_tcp(const uint8_t *buf, int16_t len)
+{
+    uint16_t i;
+
+    rx_last = timer_read();
+    if (len < 0) {
+        rx_eof = 1;
+        return;
+    }
+    for (i = 0; i < (uint16_t)len; ++i) {
+        char ch = (char)buf[i];
+
+        if (!rx_have_hdr) {
+            if (rx_hlen < sizeof(rx_hdr) - 1) {
+                rx_hdr[rx_hlen++] = ch;
+                rx_hdr[rx_hlen] = 0;
+            }
+            if (rx_hlen >= 4 && memcmp(rx_hdr + rx_hlen - 4, "\r\n\r\n", 4) == 0) {
+                if (strstr(rx_hdr, "chunked") || strstr(rx_hdr, "Chunked")) {
+                    rx_chunked = 1;
+                }
+                rx_have_hdr = 1;
+            }
+        } else {
+            feed_body(ch);
+        }
+    }
+}
+
+static void rx_reset(void (*on_byte)(char ch, void *user), void *user,
+                     char *accum, uint16_t accum_max)
+{
+    rx_eof = 0;
+    rx_have_hdr = 0;
+    rx_chunked = 0;
+    rx_chunk_st = 0;
+    rx_chunk_left = 0;
+    rx_hlen = 0;
+    rx_hexn = 0;
+    rx_hdr[0] = 0;
+    rx_on_byte = on_byte;
+    rx_user = user;
+    rx_accum = accum;
+    rx_accum_max = accum_max;
+    rx_accum_len = 0;
+    if (accum && accum_max) {
+        accum[0] = 0;
+    }
+}
+
+static void send_fail(const char *what)
+{
+    strncpy(g_http_err, what, sizeof(g_http_err) - 1);
+    g_http_err[sizeof(g_http_err) - 1] = 0;
+    if (strlen(g_http_err) + 2 < sizeof(g_http_err)) {
+        strncat(g_http_err, " ", sizeof(g_http_err) - strlen(g_http_err) - 1);
+        strncat(g_http_err, ip65_strerror(ip65_error),
+                sizeof(g_http_err) - strlen(g_http_err) - 1);
+    }
+}
+
+static int send_all(const uint8_t *p, uint16_t len)
+{
+    /* tcp_send already waits for ACK and closes on failure; do not retry. */
+    while (len) {
+        uint16_t n = len > TCP_MAX ? TCP_MAX : len;
+        if (ui_aborted()) {
+            return -1;
+        }
+        if (tcp_send(p, n)) {
+            return -1;
+        }
+        p += n;
+        len -= n;
+        ip65_process();
+    }
+    return 0;
+}
+
+static int send_aux(uint16_t total)
+{
+    uint16_t off = 0;
+
+    while (off < total) {
+        uint16_t n = (uint16_t)(total - off);
+        if (n > BOUNCE) {
+            n = BOUNCE;
+        }
+        if (n > TCP_MAX) {
+            n = TCP_MAX;
+        }
+        aux_read(off, bounce, n);
+        if (ui_aborted()) {
+            return -1;
+        }
+        if (tcp_send(bounce, n)) {
+            return -1;
+        }
+        off += n;
+        ip65_process();
+    }
+    return 0;
+}
+
+static int send_str(const char *s)
+{
+    return send_all((const uint8_t *)s, (uint16_t)strlen(s));
+}
+
+static int wait_done(void)
+{
+    rx_last = timer_read();
+    while (!rx_eof) {
+        if (ui_aborted()) {
+            tcp_close();
+            strcpy(g_http_err, "recv aborted");
+            return -1;
+        }
+        /* ~20s with no TCP payload: Ollama hung or never closed. */
+        if ((uint16_t)(timer_read() - rx_last) > 45000u) {
+            tcp_close();
+            strcpy(g_http_err, "recv timeout");
+            return -1;
+        }
+        ip65_process();
+    }
+    tcp_close();
+    return 0;
+}
+
+static int finish_status(void)
+{
+    int st;
+
+    if (!rx_have_hdr) {
+        strcpy(g_http_err, "TCP up, no HTTP reply");
+        return -1;
+    }
+    st = http_status_code(rx_hdr);
+    if (st < 200 || st > 299) {
+        const char *p = rx_hdr;
+        unsigned i = 0;
+        while (*p && *p != '\r' && *p != '\n' && i < sizeof(g_http_err) - 1) {
+            g_http_err[i++] = *p++;
+        }
+        g_http_err[i] = 0;
+        return -2;
+    }
+    return 0;
+}
+
+int http_post_file(uint32_t addr, uint16_t port, const char *url_path,
+                   const char *body_path,
+                   void (*on_byte)(char ch, void *user), void *user)
+{
+    FILE *bf;
+    long clen;
+    uint16_t hlen;
+    uint16_t got;
+    uint16_t total;
+    int rc;
+    static char bod[80];
+
+    strncpy(bod, body_path, sizeof(bod) - 1);
+    bod[sizeof(bod) - 1] = 0;
+
+    bf = fopen(bod, "rb");
+    if (!bf) {
+        strcpy(g_http_err, "cannot open POST body");
+        return -1;
+    }
+    fseek(bf, 0, SEEK_END);
+    clen = ftell(bf);
+    fseek(bf, 0, SEEK_SET);
+    if (clen < 0) {
+        fclose(bf);
+        strcpy(g_http_err, "bad POST length");
+        return -1;
+    }
+
+    if (!aux_present()) {
+        fclose(bf);
+        strcpy(g_http_err, "need 128K aux");
+        return -1;
+    }
+
+    hlen = (uint16_t)sprintf(hdr,
+            "POST %s HTTP/1.0\r\n"
+            "Host: %s:%u\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: %ld\r\n"
+            "Connection: close\r\n"
+            "\r\n",
+            url_path, g_cfg.host, (unsigned)port, clen);
+    if (hlen >= sizeof(hdr)) {
+        fclose(bf);
+        strcpy(g_http_err, "headers too long");
+        return -1;
+    }
+    if (clen > (long)(HTTP_TX_MAX - hlen)) {
+        fclose(bf);
+        strcpy(g_http_err, "POST too large");
+        return -1;
+    }
+
+    aux_write(0, (const unsigned char *)hdr, hlen);
+    total = hlen;
+    while ((long)(total - hlen) < clen) {
+        uint16_t want = (uint16_t)(clen - (long)(total - hlen));
+        if (want > BOUNCE) {
+            want = BOUNCE;
+        }
+        got = (uint16_t)fread(bounce, 1, want, bf);
+        if (got == 0) {
+            break;
+        }
+        aux_write(total, bounce, got);
+        total += got;
+    }
+    fclose(bf);
+    if ((long)(total - hlen) != clen) {
+        strcpy(g_http_err, "POST short read");
+        return -1;
+    }
+
+    rx_reset(on_byte, user, 0, 0);
+    if (tcp_connect(addr, port, on_tcp)) {
+        send_fail("TCP connect");
+        return -1;
+    }
+    ui_status("POST /api/chat ...");
+    if (send_aux(total) < 0) {
+        tcp_close();
+        send_fail("send body");
+        return -1;
+    }
+    if (user) {
+        struct jsonscan *js = (struct jsonscan *)user;
+        js->pay = fopen(self_path("A2CHAT.PAY"), "wb");
+    }
+    if (wait_done() < 0) {
+        return -1;
+    }
+    rc = finish_status();
+    if (rc == 0) {
+        strcpy(g_http_err, "HTTP 200");
+    }
+    return rc;
+}
+
+int http_probe_tags(uint32_t addr, uint16_t port)
+{
+    static char req[160];
+    static char body[160];
+    int rc;
+
+    g_http_err[0] = 0;
+    ui_status("TCP connect to Ollama...");
+    rx_reset(0, 0, body, sizeof(body));
+    if (tcp_connect(addr, port, on_tcp)) {
+        strcpy(g_http_err, "TCP connect failed");
+        return -1;
+    }
+    sprintf(req,
+            "GET /api/tags HTTP/1.0\r\n"
+            "Host: %s:%u\r\n"
+            "Connection: close\r\n"
+            "\r\n",
+            g_cfg.host, (unsigned)port);
+    ui_status("GET /api/tags ...");
+    if (send_str(req) < 0) {
+        tcp_close();
+        strcpy(g_http_err, "TCP up, send failed");
+        return -1;
+    }
+    if (wait_done() < 0) {
+        return -1;
+    }
+    rc = finish_status();
+    if (rc < 0) {
+        return rc;
+    }
+    if (g_cfg.model[0] && strstr(body, g_cfg.model)) {
+        strcpy(g_http_err, "HTTP 200, model listed");
+        return 1;
+    }
+    strcpy(g_http_err, "HTTP 200, model not in tags");
+    return 0;
+}
