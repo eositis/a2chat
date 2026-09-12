@@ -4,6 +4,8 @@ Native **ProDOS 8** chat client for an enhanced **Apple IIe** or **Apple IIc** w
 
 **Using it on the Apple:** see **[USERGUIDE.md](USERGUIDE.md)** (hardware, disk install, config, commands, saving files, troubleshooting).
 
+**Pitch / one-pagers:** [MARKETING.md](MARKETING.md).
+
 This file is the build and developer overview.
 
 ## Hardware
