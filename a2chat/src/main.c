@@ -107,5 +107,6 @@ int main(int argc, char *argv[])
     }
     net_shutdown();
     ui_exit();
+    prodos_quit();
     return 0;
 }

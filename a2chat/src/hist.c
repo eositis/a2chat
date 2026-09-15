@@ -36,34 +36,21 @@ long hist_size(void)
     return n;
 }
 
-static int skip_record_payload(FILE *f, uint16_t len)
-{
-    while (len) {
-        uint16_t n = len;
-        if (n > sizeof(iobuf)) {
-            n = (uint16_t)sizeof(iobuf);
-        }
-        if (fread(iobuf, 1, n, f) != n) {
-            return -1;
-        }
-        len = (uint16_t)(len - n);
-    }
-    return 0;
-}
-
 static int hist_compact(void)
 {
     FILE *in;
     FILE *out;
     long sz;
-    long pos;
     long skip;
     uint16_t cap;
     size_t n;
+#ifdef A2CHAT_HOST
+    long pos;
     int t;
     unsigned lo;
     unsigned hi;
     uint16_t len;
+#endif
 
     cap = g_cfg.histcap ? g_cfg.histcap : DEFAULT_HISTCAP;
     sz = hist_size();
@@ -75,6 +62,41 @@ static int hist_compact(void)
     if (!in) {
         return -1;
     }
+#ifndef A2CHAT_HOST
+    {
+        unsigned au = 0;
+        uint16_t off;
+        uint16_t chunk;
+
+        if (skip > 0) {
+            fseek(in, skip, SEEK_SET);
+        }
+        while ((n = fread(iobuf, 1, sizeof(iobuf), in)) > 0) {
+            if (au + (unsigned)n > A2CHAT_AUX_POST_MAX) {
+                break;
+            }
+            aux_write(au, (const unsigned char *)iobuf, (unsigned)n);
+            au += (unsigned)n;
+        }
+        fclose(in);
+        out = fopen(hist_path(), "wb");
+        if (!out) {
+            return -1;
+        }
+        off = 0;
+        while (off < au) {
+            chunk = (uint16_t)sizeof(iobuf);
+            if ((unsigned)off + chunk > au) {
+                chunk = (uint16_t)(au - off);
+            }
+            aux_read(off, (unsigned char *)iobuf, chunk);
+            fwrite(iobuf, 1, chunk, out);
+            off += chunk;
+        }
+        fclose(out);
+        return 0;
+    }
+#else
     pos = 0;
     while (pos < skip) {
         t = fgetc(in);
@@ -92,37 +114,6 @@ static int hist_compact(void)
         }
         pos += 3 + (long)len;
     }
-#ifndef A2CHAT_HOST
-    {
-        unsigned au = 0;
-        uint16_t off;
-        uint16_t chunk;
-
-        while ((n = fread(iobuf, 1, sizeof(iobuf), in)) > 0) {
-            if (au + (unsigned)n > A2CHAT_AUX_POST_MAX) {
-                break;
-            }
-            aux_write(au, (const unsigned char *)iobuf, (unsigned)n);
-            au += (unsigned)n;
-        }
-        fclose(in);
-        out = fopen(self_path("A2CHAT.HC"), "wb");
-        if (!out) {
-            return -1;
-        }
-        off = 0;
-        while (off < au) {
-            chunk = (uint16_t)sizeof(iobuf);
-            if ((unsigned)off + chunk > au) {
-                chunk = (uint16_t)(au - off);
-            }
-            aux_read(off, (unsigned char *)iobuf, chunk);
-            fwrite(iobuf, 1, chunk, out);
-            off += chunk;
-        }
-        fclose(out);
-    }
-#else
     out = fopen("A2CHAT.HC", "wb");
     if (!out) {
         fclose(in);
@@ -142,6 +133,22 @@ static int hist_compact(void)
     return 0;
 }
 
+#ifdef A2CHAT_HOST
+static int skip_record_payload(FILE *f, uint16_t len)
+{
+    while (len) {
+        uint16_t n = len;
+        if (n > sizeof(iobuf)) {
+            n = (uint16_t)sizeof(iobuf);
+        }
+        if (fread(iobuf, 1, n, f) != n) {
+            return -1;
+        }
+        len = (uint16_t)(len - n);
+    }
+    return 0;
+}
+
 static int hist_write_hdr(FILE *f, char type, uint16_t len)
 {
     unsigned char hdr[3];
@@ -151,6 +158,7 @@ static int hist_write_hdr(FILE *f, char type, uint16_t len)
     hdr[2] = (unsigned char)(len >> 8);
     return fwrite(hdr, 1, 3, f) == 3 ? 0 : -1;
 }
+#endif
 
 static void hist_maybe_compact(void)
 {
@@ -159,13 +167,63 @@ static void hist_maybe_compact(void)
     }
 }
 
+#ifndef A2CHAT_HOST
+static FILE *hist_open_append(void)
+{
+    FILE *f;
+    int c;
+
+    f = fopen(hist_path(), "rb");
+    if (!f) {
+        return fopen(hist_path(), "wb");
+    }
+    c = fgetc(f);
+    fclose(f);
+    if (c != '>' && c != EOF) {
+        return fopen(hist_path(), "wb");
+    }
+    return fopen(hist_path(), "ab");
+}
+
+static int hist_put_head(FILE *f, char type)
+{
+    char stamp[20];
+    const char *tag;
+
+    clock_stamp(stamp, sizeof stamp);
+    if (type == 'A') {
+        tag = ">AI ";
+    } else if (type == 'T') {
+        tag = ">TOOL ";
+    } else {
+        tag = ">YOU ";
+    }
+    fputs(tag, f);
+    fputs(stamp, f);
+    fputc('\r', f);
+    return 0;
+}
+#endif
+
 int hist_append(char type, const char *data, uint16_t len)
 {
     FILE *f;
 
 #ifndef A2CHAT_HOST
     __asm__("cld");
-#endif
+    f = hist_open_append();
+    if (!f) {
+        return -1;
+    }
+    hist_put_head(f, type);
+    if (len) {
+        fwrite(data, 1, len, f);
+    }
+    fputc('\r', f);
+    fclose(f);
+    hist_maybe_compact();
+    return 0;
+#else
 
     f = fopen(hist_path(), "ab");
     if (!f) {
@@ -184,6 +242,7 @@ int hist_append(char type, const char *data, uint16_t len)
     fclose(f);
     hist_maybe_compact();
     return 0;
+#endif
 }
 
 int hist_append_aux(char type, uint16_t len)
@@ -198,6 +257,27 @@ int hist_append_aux(char type, uint16_t len)
     if (len == 0) {
         return 0;
     }
+#ifndef A2CHAT_HOST
+    out = hist_open_append();
+    if (!out) {
+        return -1;
+    }
+    hist_put_head(out, type);
+    off = 0;
+    while (off < len) {
+        uint16_t n = sizeof(iobuf);
+        if (n > (uint16_t)(len - off)) {
+            n = (uint16_t)(len - off);
+        }
+        aux_read(off, (unsigned char *)iobuf, n);
+        fwrite(iobuf, 1, n, out);
+        off += n;
+    }
+    fputc('\r', out);
+    fclose(out);
+    hist_maybe_compact();
+    return 0;
+#else
     out = fopen(hist_path(), "ab");
     if (!out) {
         out = fopen(hist_path(), "wb");
@@ -209,19 +289,10 @@ int hist_append_aux(char type, uint16_t len)
         fclose(out);
         return -1;
     }
-    off = 0;
-    while (off < len) {
-        uint16_t n = sizeof(iobuf);
-        if (n > (uint16_t)(len - off)) {
-            n = (uint16_t)(len - off);
-        }
-        aux_read(off, (unsigned char *)iobuf, n);
-        fwrite(iobuf, 1, n, out);
-        off += n;
-    }
+    (void)off;
     fclose(out);
-    hist_maybe_compact();
     return 0;
+#endif
 }
 
 void hist_new(void)
@@ -238,109 +309,94 @@ void hist_new(void)
 }
 
 #ifndef A2CHAT_HOST
-uint16_t hist_aux_load(void)
+static int hgetc(FILE *f)
+{
+    int c = fgetc(f);
+
+    if (c == EOF) {
+        return EOF;
+    }
+    return c & 0x7f;
+}
+
+static uint16_t emit_role(uint16_t off, int assistant)
+{
+    off = aux_add_str(off, ",{\"role\":\"");
+    off = aux_add_str(off, assistant ? "assistant" : "user");
+    return aux_add_str(off, "\",\"content\":\"");
+}
+
+uint16_t hist_emit_json_aux(uint16_t off)
 {
     FILE *f;
-    uint16_t au = 0;
-    size_t n;
+    int hold;
+    int c;
 
     __asm__("cld");
     f = fopen(hist_path(), "rb");
     if (!f) {
-        return 0;
+        return off;
     }
-    while (au < A2CHAT_AUX_POST_MAX) {
-        uint16_t room = (uint16_t)(A2CHAT_AUX_POST_MAX - au);
-        uint16_t want = (uint16_t)sizeof(iobuf);
-        if (want > room) {
-            want = room;
+    hold = 0;
+    for (;;) {
+        int ai;
+        unsigned n;
+
+        if (hold) {
+            c = hold;
+            hold = 0;
+        } else {
+            c = hgetc(f);
         }
-        n = fread(iobuf, 1, want, f);
-        if (n == 0) {
+        if (c == EOF) {
             break;
         }
-        aux_write(au, (unsigned char *)iobuf, (unsigned)n);
-        au = (uint16_t)(au + (uint16_t)n);
-        if (n < want) {
+        if (c != '>') {
+            continue;
+        }
+        ai = 0;
+        c = hgetc(f);
+        if (c == 'A') {
+            ai = 1;
+        }
+        while (c != EOF && c != '\r' && c != '\n') {
+            c = hgetc(f);
+        }
+        off = emit_role(off, ai);
+        n = 0;
+        for (;;) {
+            if (n >= sizeof(iobuf) - 2) {
+                off = json_escape_aux(off, iobuf, n);
+                n = 0;
+            }
+            c = hgetc(f);
+            if (c == EOF) {
+                break;
+            }
+            if (c == '\r' || c == '\n') {
+                int n2 = hgetc(f);
+                if (n2 == '>' || n2 == EOF) {
+                    hold = n2;
+                    break;
+                }
+                iobuf[n++] = '\n';
+                if (n2 != '\r' && n2 != '\n') {
+                    iobuf[n++] = (char)n2;
+                }
+            } else {
+                iobuf[n++] = (char)c;
+            }
+        }
+        if (n) {
+            off = json_escape_aux(off, iobuf, n);
+        }
+        off = aux_add_str(off, "\"}");
+        if (hold == EOF) {
             break;
         }
     }
     fclose(f);
-    return au;
-}
-
-void hist_aux_to_json(FILE *body, uint16_t tot)
-{
-    uint16_t pos = 0;
-    uint16_t start = 0;
-    uint16_t budget;
-
-    if (!tot) {
-        return;
-    }
-    budget = g_cfg.maxhist ? g_cfg.maxhist : DEFAULT_MAXHIST;
-    if (tot > budget) {
-        start = (uint16_t)(tot - budget);
-    }
-    while (pos + 3 <= tot) {
-        unsigned char hdr[3];
-        int t;
-        uint16_t len;
-        uint16_t left;
-        uint16_t rec;
-        int emit;
-
-        aux_read(pos, hdr, 3);
-        t = hdr[0];
-        if (t != 'U' && t != 'A' && t != 'T') {
-            break;
-        }
-        len = (uint16_t)(hdr[1] | ((uint16_t)hdr[2] << 8));
-        rec = pos;
-        pos = (uint16_t)(pos + 3);
-        if ((uint16_t)(pos + len) > tot) {
-            break;
-        }
-        emit = (rec >= start);
-        if (t == 'A' && len == 10) {
-            aux_read(pos, (unsigned char *)iobuf, 10);
-            pos = (uint16_t)(pos + 10);
-            if (!memcmp(iobuf, "(streamed)", 10)) {
-                continue;
-            }
-            if (emit) {
-                fputc(',', body);
-                fputs("{\"role\":\"assistant\",\"content\":\"", body);
-                json_escape_fwrite(body, iobuf, 10);
-                fputs("\"}", body);
-            }
-            continue;
-        }
-        if (!emit) {
-            pos = (uint16_t)(pos + len);
-            continue;
-        }
-        fputc(',', body);
-        if (t == 'A') {
-            fputs("{\"role\":\"assistant\",\"content\":\"", body);
-        } else if (t == 'T') {
-            fputs("{\"role\":\"user\",\"content\":\"TOOL: ", body);
-        } else {
-            fputs("{\"role\":\"user\",\"content\":\"", body);
-        }
-        left = len;
-        while (left) {
-            uint16_t n = left;
-            if (n > sizeof(iobuf)) {
-                n = (uint16_t)sizeof(iobuf);
-            }
-            aux_read(pos, (unsigned char *)iobuf, n);
-            json_escape_fwrite(body, iobuf, n);
-            pos = (uint16_t)(pos + n);
-            left = (uint16_t)(left - n);
-        }
-        fputs("\"}", body);
-    }
+    return off;
 }
 #endif
 

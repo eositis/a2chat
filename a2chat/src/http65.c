@@ -14,11 +14,10 @@
 #include <ctype.h>
 
 #define TCP_MAX 900
-#define HTTP_TX_MAX A2CHAT_AUX_POST_MAX
 #define BOUNCE 16
 
 static unsigned char bounce[BOUNCE];
-static char hdr[128];
+static char hdr[160];
 static char bod[48];
 
 static uint8_t rx_eof;
@@ -241,6 +240,7 @@ static int send_aux(uint16_t off, uint16_t total)
             n = TCP_MAX;
         }
         aux_read(off, bounce, n);
+        aux_mainbank();
         if (ui_aborted()) {
             return -1;
         }
@@ -301,38 +301,16 @@ static int finish_status(void)
     return 0;
 }
 
-int http_post_file(uint32_t addr, uint16_t port, const char *url_path,
-                   const char *body_path,
-                   void (*on_bytes)(const char *p, unsigned n, void *user),
-                   void *user)
+int http_post_aux(uint32_t addr, uint16_t port, const char *url_path,
+                  uint16_t json_len,
+                  void (*on_bytes)(const char *p, unsigned n, void *user),
+                  void *user)
 {
-    FILE *bf;
-    long clen;
     uint16_t hlen;
-    uint16_t got;
-    uint16_t total;
     int rc;
 
-    strncpy(bod, body_path, sizeof(bod) - 1);
-    bod[sizeof(bod) - 1] = 0;
-
-    bf = fopen(bod, "rb");
-    if (!bf) {
-        strcpy(g_http_err, "cannot open POST body");
-        return -1;
-    }
-    fseek(bf, 0, SEEK_END);
-    clen = ftell(bf);
-    fseek(bf, 0, SEEK_SET);
-    if (clen < 0) {
-        fclose(bf);
-        strcpy(g_http_err, "bad POST length");
-        return -1;
-    }
-
-    if (!aux_present()) {
-        fclose(bf);
-        strcpy(g_http_err, "need 128K aux");
+    if (!json_len) {
+        strcpy(g_http_err, "empty POST");
         return -1;
     }
 
@@ -340,38 +318,12 @@ int http_post_file(uint32_t addr, uint16_t port, const char *url_path,
             "POST %s HTTP/1.0\r\n"
             "Host: %s:%u\r\n"
             "Content-Type: application/json\r\n"
-            "Content-Length: %ld\r\n"
+            "Content-Length: %u\r\n"
             "Connection: close\r\n"
             "\r\n",
-            url_path, g_cfg.host, (unsigned)port, clen);
+            url_path, g_cfg.host, (unsigned)port, (unsigned)json_len);
     if (hlen >= sizeof(hdr)) {
-        fclose(bf);
         strcpy(g_http_err, "headers too long");
-        return -1;
-    }
-    if (clen > (long)(HTTP_TX_MAX - hlen)) {
-        fclose(bf);
-        strcpy(g_http_err, "POST too large");
-        return -1;
-    }
-
-    aux_write(0, (const unsigned char *)hdr, hlen);
-    total = hlen;
-    while ((long)(total - hlen) < clen) {
-        uint16_t want = (uint16_t)(clen - (long)(total - hlen));
-        if (want > BOUNCE) {
-            want = BOUNCE;
-        }
-        got = (uint16_t)fread(bounce, 1, want, bf);
-        if (got == 0) {
-            break;
-        }
-        aux_write(total, bounce, got);
-        total += got;
-    }
-    fclose(bf);
-    if ((long)(total - hlen) != clen) {
-        strcpy(g_http_err, "POST short read");
         return -1;
     }
 
@@ -380,21 +332,30 @@ int http_post_file(uint32_t addr, uint16_t port, const char *url_path,
         uint8_t tries;
 
         for (tries = 0; tries < 3; tries++) {
+            aux_mainbank();
             if (tcp_connect(addr, port, on_tcp)) {
                 send_fail("TCP connect");
                 return -1;
             }
             ui_status("POST /api/chat ...");
-            /* Headers from MAIN (same as GET /api/tags); body from aux. */
-            if (send_str(hdr) == 0 && send_aux(hlen, total) == 0) {
-                clock_reset_ms();
-                break;
+            if (send_str(hdr) != 0) {
+                tcp_close();
+                if (tries == 2) {
+                    send_fail("send hdr");
+                    return -1;
+                }
+                continue;
             }
-            tcp_close();
-            if (tries == 2) {
-                send_fail("send body");
-                return -1;
+            if (send_aux(0, json_len) != 0) {
+                tcp_close();
+                if (tries == 2) {
+                    send_fail("send aux");
+                    return -1;
+                }
+                continue;
             }
+            clock_reset_ms();
+            break;
         }
     }
     if (wait_done() < 0) {

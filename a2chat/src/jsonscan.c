@@ -305,6 +305,75 @@ void jsonscan_on_bytes(const char *p, unsigned n, void *user)
     jsonscan_feed_buf((struct jsonscan *)user, p, n);
 }
 
+#ifndef A2CHAT_HOST
+uint16_t aux_add_str(uint16_t off, const char *s)
+{
+    unsigned n;
+
+    n = (unsigned)strlen(s);
+    if (off >= A2CHAT_AUX_POST_MAX) {
+        return off;
+    }
+    if ((unsigned)off + n > A2CHAT_AUX_POST_MAX) {
+        n = A2CHAT_AUX_POST_MAX - (unsigned)off;
+    }
+    if (n) {
+        aux_write(off, (const unsigned char *)s, n);
+    }
+    return (uint16_t)(off + n);
+}
+
+uint16_t json_escape_aux(uint16_t off, const char *s, unsigned n)
+{
+    unsigned i;
+    char pair[2];
+
+    for (i = 0; i < n && off < A2CHAT_AUX_POST_MAX; i++) {
+        unsigned char c = (unsigned char)s[i] & 0x7f;
+        if (c == 0) {
+            continue;
+        }
+        if (c == '"' || c == '\\') {
+            pair[0] = '\\';
+            pair[1] = (char)c;
+            if ((unsigned)off + 2 > A2CHAT_AUX_POST_MAX) {
+                break;
+            }
+            aux_write(off, (const unsigned char *)pair, 2);
+            off = (uint16_t)(off + 2);
+        } else if (c == '\n') {
+            pair[0] = '\\';
+            pair[1] = 'n';
+            if ((unsigned)off + 2 > A2CHAT_AUX_POST_MAX) {
+                break;
+            }
+            aux_write(off, (const unsigned char *)pair, 2);
+            off = (uint16_t)(off + 2);
+        } else if (c == '\r') {
+            pair[0] = '\\';
+            pair[1] = 'r';
+            if ((unsigned)off + 2 > A2CHAT_AUX_POST_MAX) {
+                break;
+            }
+            aux_write(off, (const unsigned char *)pair, 2);
+            off = (uint16_t)(off + 2);
+        } else if (c == '\t') {
+            pair[0] = '\\';
+            pair[1] = 't';
+            if ((unsigned)off + 2 > A2CHAT_AUX_POST_MAX) {
+                break;
+            }
+            aux_write(off, (const unsigned char *)pair, 2);
+            off = (uint16_t)(off + 2);
+        } else if (c >= 32) {
+            aux_write(off, &c, 1);
+            off = (uint16_t)(off + 1);
+        }
+    }
+    return off;
+}
+#endif
+
 void json_escape_fwrite(FILE *f, const char *s, unsigned n)
 {
     unsigned i;

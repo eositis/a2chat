@@ -6,6 +6,7 @@
         .export         __STARTUP__ : absolute = 1
         .export         done, return
         .export         zpsave
+        .export         _prodos_quit
         .import         zerobss, callmain
         .import         __dos_type
         .include        "zeropage.inc"
@@ -89,9 +90,28 @@ reset:  stx     SOFTEV
         sta     PWREDUP
 return: rts
 
-quit:   jsr     $BF00
+quit:
+_prodos_quit:
+        sei
+        cld
+        ldx     #zpspace-1
+:       lda     zpsave,x
+        sta     sp,x
+        dex
+        bpl     :-
+        ; 40-col / main bank. Do not $C080/$C082: that unmaps ProDOS LC.
+        sta     $C000
+        sta     $C00C
+        sta     $C051
+        sta     $C054
+        sta     $C002
+        sta     $C004
+        ldx     #$FF
+        txs
+        jsr     $BF00
         .byte   $65
         .word   q_param
+        jmp     DOSWARM
 
         .rodata
 q_param:.byte   $04

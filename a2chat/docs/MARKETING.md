@@ -33,11 +33,12 @@ It is not a general internet browser, not a ChatGPT website wrapper, and not a r
 
 ## What you can show in thirty seconds
 
-1. Boot `/A2CHAT/` — inverse status bar, 80-column chrome, slash-command help row.
+1. Boot `/A2CHAT/` — inverse status bar, 80-column chrome, slash-command help row (time and build on the right).
 2. `/ping` — Apple IP, gateway, **Probe OK**.
 3. Type a question — tokens appear as they arrive.
 4. Ask it to save as markdown — `Wrote /YOUR/PREFIX/NOTE.MD`.
 5. `/cat` — the new file is on the volume. `/quit` returns to ProDOS, not the monitor.
+6. `/about` — version, author, date, GitHub URL.
 
 ---
 
@@ -47,10 +48,10 @@ It is not a general internet browser, not a ChatGPT website wrapper, and not a r
 |---|---|
 | **Native** | ProDOS 8 SYS/BIN, 65C02, 80-column firmware. Not a cross-compiled Linux binary in an emulator-only world. |
 | **Local AI** | HTTP to Ollama (`HOST=` dotted IPv4, typically port 11434). Model tags such as `llama3.2:3b`. |
-| **Streaming UI** | 80×24 layout: status, 20-row chat, two-line prompt (159 characters), always-on command bar. |
+| **Streaming UI** | 80×24 layout: status, 20-row chat, prompt, always-on command bar. |
 | **Disk citizen** | `PREFIX` workspace, `/cat` `/read` `/save`, ProDOS 15-character names (no spaces), TXT and BAS writes. |
-| **Honest hardware** | Uthernet II (W5100). IIe any slot; IIc needs MegaFlash. 128K recommended (aux RAM stages the POST). |
-| **Yours to build** | cc65 + IP65. `make disk` produces a bootable 140K `.po`. |
+| **Honest hardware** | Uthernet II (W5100). IIe any slot; IIc needs MegaFlash. 128K required (aux RAM stages the POST). |
+| **Yours to build** | cc65 + IP65. `make disk` produces a bootable 140K `.po`; `make hd` an 8MB `.hdv`. |
 
 ---
 
@@ -83,4 +84,4 @@ The point is not throughput. A modern laptop will always chat faster. The point 
 - One saved `NOTE.MD` in a catalog listing
 - Hardware: IIe + Uthernet II, or IIc + MegaFlash
 
-Operator details: [USERGUIDE.md](USERGUIDE.md). Build notes: [README.md](README.md).
+Operator details: [USERGUIDE.md](USERGUIDE.md). Build notes: [README.md](README.md). Measured runs: [PERFORMANCE.md](PERFORMANCE.md).

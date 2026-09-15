@@ -130,22 +130,26 @@ void ui_set_perf(const char *s)
 
 static void help_row(void)
 {
+    const char *h = "/config /ping /cat /new /model /read /save /quit /about";
     char t[10];
-    const char *h = "/config /ping /cat /new /model /read /save /quit";
-    const char *k;
+    unsigned char col;
+    unsigned n;
 
     clock_wall(t, sizeof t);
-    k = clock_kind_name();
+    n = (unsigned)strlen(t) + 2u + (unsigned)strlen(A2CHAT_BUILD_STR);
+    col = (unsigned char)(80u - n);
     gotoxy(0, HELP_ROW);
     revers(1);
     cputs(h);
-    cputs(" B");
-    cputs(A2CHAT_BUILD_STR);
-    cclear((unsigned char)(61 - strlen(h) - 2 - (unsigned)strlen(A2CHAT_BUILD_STR)));
+    if ((unsigned)strlen(h) < col) {
+        cclear((unsigned char)(col - (unsigned)strlen(h)));
+    }
+    gotoxy(col, HELP_ROW);
+    revers(1);
     cputs(t);
     cputc(' ');
-    cputs(k);
-    cclear((unsigned char)(80 - 62 - strlen(t) - strlen(k)));
+    cputc('B');
+    cputs(A2CHAT_BUILD_STR);
     revers(0);
 }
 
@@ -443,7 +447,4 @@ void ui_exit(void)
     PAGE2_OFF = 0;
     revers(0);
     cursor(1);
-    videomode(VIDEOMODE_40COL);
-    clrscr();
-    __asm__("bit $C082");
 }

@@ -6,8 +6,9 @@
 #include <stdio.h>
 #include <stddef.h>
 
-#define A2CHAT_BUILD 7
-#define A2CHAT_BUILD_STR "7"
+#define A2CHAT_BUILD 13
+#define A2CHAT_BUILD_STR "13"
+#define A2CHAT_VERSION "1.1"
 #define A2CHAT_PATH_MAX 48
 #define A2CHAT_LINE_MAX 120
 #define A2CHAT_TOOL_NAME_MAX 16
@@ -103,6 +104,8 @@ void jsonscan_feed_buf(struct jsonscan *j, const char *p, unsigned n);
 void jsonscan_on_byte(char ch, void *user);
 void jsonscan_on_bytes(const char *p, unsigned n, void *user);
 void json_escape_fwrite(FILE *f, const char *s, unsigned n);
+uint16_t json_escape_aux(uint16_t off, const char *s, unsigned n);
+uint16_t aux_add_str(uint16_t off, const char *s);
 unsigned json_escape_len(const char *s, unsigned n);
 
 /* jsonesc helpers used by host tests and ollama */
@@ -141,10 +144,10 @@ int net_init(uint8_t slot);
 void net_shutdown(void);
 void net_diag_ollama(void);
 
-int http_post_file(uint32_t addr, uint16_t port, const char *path,
-                   const char *body_path,
-                   void (*on_bytes)(const char *p, unsigned n, void *user),
-                   void *user);
+int http_post_aux(uint32_t addr, uint16_t port, const char *path,
+                  uint16_t json_len,
+                  void (*on_bytes)(const char *p, unsigned n, void *user),
+                  void *user);
 int http_probe_tags(uint32_t addr, uint16_t port);
 
 /* Aux $4000-$BFFF: 32K POST + answer staging. Copy routines live in LC. */
@@ -155,6 +158,8 @@ unsigned char __fastcall__ p8_prefix(char *dst);
 #endif
 void __fastcall__ aux_write(unsigned off, const unsigned char *src, unsigned n);
 void __fastcall__ aux_read(unsigned off, unsigned char *dst, unsigned n);
+void aux_mainbank(void);
+void prodos_quit(void);
 
 #define CLOCK_NONE  0
 #define CLOCK_JIFFY 1
@@ -163,6 +168,7 @@ void __fastcall__ aux_read(unsigned off, unsigned char *dst, unsigned n);
 uint8_t clock_kind(void);
 void clock_init(void);
 void clock_wall(char *dst, unsigned dstsz);
+void clock_stamp(char *dst, unsigned dstsz);
 void clock_reset_ms(void);
 uint32_t clock_elapsed_ms(void);
 uint32_t clock_post_ms(void);
@@ -170,8 +176,7 @@ const char *clock_kind_name(void);
 
 int hist_append(char type, const char *data, uint16_t len);
 int hist_append_aux(char type, uint16_t len);
-uint16_t hist_aux_load(void);
-void hist_aux_to_json(FILE *body, uint16_t n);
+uint16_t hist_emit_json_aux(uint16_t off);
 int hist_write_messages(FILE *body);
 void hist_new(void);
 long hist_size(void);

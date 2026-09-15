@@ -2,7 +2,9 @@
 
 A2CHAT is a ProDOS 8 chat client for an enhanced Apple IIe or Apple IIc. It talks HTTP to [Ollama](https://ollama.com) on your LAN, streams the reply in 80-column text, and can save notes or BASIC listings onto a ProDOS volume.
 
-This guide is for using the program on the Apple. For building from source, see [README.md](README.md).
+Version **1.1**. The help row shows the binary build on the far right (currently **B13**).
+
+This guide is for using the program on the Apple. For building from source, see [README.md](README.md). For memory layout and measured timings, see [PERFORMANCE.md](PERFORMANCE.md).
 
 ## What you need
 
@@ -31,9 +33,7 @@ Then restart Ollama and pull a model, for example `ollama pull llama3.2:3b`.
 
 ## Install the disk
 
-Copy `a2chat.po` (140K ProDOS volume `/A2CHAT/`) onto a floppy, SmartPort image, or emulator drive.
-
-The volume contains:
+Copy `a2chat.po` (140K) or `a2chat.hdv` (8MB) onto a floppy, SmartPort image, or emulator drive. Both are volume `/A2CHAT/`.
 
 | File | Role |
 |------|------|
@@ -42,30 +42,32 @@ The volume contains:
 | `A2CHAT` | The program (BIN at `$0803`) |
 | `A2CHAT.CFG` | Settings (text) |
 
-**If you rebuilt with `make` / `make disk`:** the image always gets the *sample* `cfg/A2CHAT.CFG`. After copying the new `.po` to the Apple, restore your real `HOST`, `MODEL`, `PREFIX`, and static `IP` if you use them.
+**If you rebuilt with `make` / `make disk` / `make hd`:** the image always gets the *sample* `cfg/A2CHAT.CFG`. After copying the new image to the Apple, restore your real `HOST`, `MODEL`, `PREFIX`, and static `IP` if you use them.
 
 Edit `A2CHAT.CFG` with any ProDOS text editor, or from inside A2CHAT with `/config` (host, port, model, slot only — PREFIX and IP are still edited in the file).
 
 ## First boot
 
 1. Boot the volume. You should get 80-column A2CHAT, not Applesoft.
-2. The top inverse bar shows host, port, model, slot, and `Conn` or `----`.
-3. Startup prints the config path, the data directory, the Apple IP, and an Ollama probe.
+2. The top inverse bar shows host, port, model, slot, and `Conn` or `----`. After a reply it shows elapsed seconds, token count, and tokens/sec (for example `3s 16t 5/s`).
+3. Startup prints the config path, the data directory, **Clock P8** (or `MFMS` / `JIFFY`), wall time, the Apple IP, and an Ollama probe.
 4. **Probe OK** means HTTP reached Ollama. If it also says to pull the model, `MODEL=` does not match a tag on that server.
 5. Type a question and press Return, or type a slash command from the help row.
 
-If Ethernet fails, A2CHAT continues **offline**. `/cat`, `/config`, `/quit`, and similar still work; chat will not.
+If Ethernet fails, A2CHAT continues **offline**. `/cat`, `/config`, `/about`, `/quit`, and similar still work; chat will not.
 
 ## Screen
 
 | Rows | What |
 |------|------|
-| 0 | Status: host, model, slot, connection |
+| 0 | Status: host, model, connection; after a reply, `Ns Nt N/s` |
 | 1–20 | Chat (You / AI) |
-| 21–22 | Two-line prompt (up to 159 characters) |
-| 23 | Inverse help: `/config /ping /cat /new /model /read /save /quit` |
+| 21–22 | Prompt |
+| 23 | Inverse help: commands on the left; **`HH:MM:SS` and `B13` on the far right** |
 
-The first non-slash prompt, and `/new`, clear the chat pane. History is still in `A2CHAT.LOG` until you `/new`.
+`P8` is the ProDOS clock, not a second build number. Only the **B** series is shown on the help row.
+
+The first non-slash prompt, and `/new`, clear the chat pane. History stays in `A2CHAT.LOG` until you `/new`.
 
 Open-Apple + `.` (or the IP65 abort key) can interrupt a transfer.
 
@@ -87,7 +89,7 @@ Lines are `KEY=value`. Unknown keys are ignored.
 
 `/config` saves host, port, model, and slot into `A2CHAT.CFG`. If you change slot or IP, quit and run A2CHAT again so Ethernet re-inits.
 
-Use a `PREFIX` on a larger volume when you want notes and logs off the 140K program disk. Create that directory in ProDOS first; A2CHAT will `chdir` there when it exists.
+Use a `PREFIX` on a larger volume when you want notes and logs off the 140K program disk. Create that directory in ProDOS first.
 
 ## Slash commands
 
@@ -101,18 +103,19 @@ Use a `PREFIX` on a larger volume when you want notes and logs off the 140K prog
 | `/save PATH` | `/s` | Copy `A2CHAT.LOG` to that name under PREFIX |
 | `/model NAME` | | Set and save the model; with no name, print the current model |
 | `/new` | | Start a fresh chat (clears the log used as history) |
-| `/quit` | `/q` | Return to ProDOS (80-col off, ROM in). Should not drop into the monitor. |
+| `/about` | `/a` | Clear the chat pane; print version, author, date, and GitHub URL |
+| `/quit` | `/q` | ProDOS QUIT (80-column off, ProDOS left mapped). Should not drop into the monitor. |
 | `/help` | | Print the command list (any unknown `/` command does too) |
 
-Paths you type are turned into **ProDOS leaf names** under `PREFIX`. You cannot overwrite `PRODOS`, `A2CHAT.SYSTEM`, `A2CHAT.CFG`, or `A2CHAT.BIN`.
+Paths you type are turned into **ProDOS leaf names** under `PREFIX`. You cannot overwrite `PRODOS`, `A2CHAT.SYSTEM`, `A2CHAT.CFG`, or `A2CHAT`.
 
 ## Chatting
 
-Type a line that does not start with `/` and press Return. Status shows `Talking to Ollama...` while the reply streams.
+Type a line that does not start with `/` and press Return. Status shows `POST /api/chat ...` then streams the reply.
 
 Keep prompts reasonably short. The POST is staged in aux RAM (32K). A long `A2CHAT.LOG` (`MAXHIST`) plus a long prompt can fail or time out.
 
-There is **no live function-calling** to the disk from the model. Extra tool JSON made the HTTP send miss TCP ACKs on this stack (`send body Timeout`). Chat is plain messages only.
+There is **no live function-calling** to the disk from the model. Extra tool JSON made the HTTP send miss TCP ACKs (`send body Timeout`). Chat is plain messages only.
 
 ## Saving a reply to disk
 
@@ -151,32 +154,20 @@ Under `PREFIX` (or the launch directory):
 | File | Role |
 |------|------|
 | `A2CHAT.CFG` | Settings (also next to the program if PREFIX is empty) |
-| `A2CHAT.LOG` | Chat history spliced into later POSTs |
-| `A2CHAT.BOD` | Last HTTP request body |
-| `A2CHAT.PAY` / `A2CHAT.WR` | Temporary payload / write staging |
-| `A2CHAT.HC` | Log compact scratch |
+| `A2CHAT.LOG` | Timestamped text history (`>YOU` / `>AI` plus clock). Spliced into later POSTs; `/save` copies it. |
 | `NOTE.MD` / `PROG.BAS` | Default saved replies |
 
-Disk is slow. Short chats should finish in a few seconds; `/read` or `/save` of a large file can take much longer.
+There is no `A2CHAT.BOD` scratch file. Chat POST JSON lives in aux RAM.
+
+Disk is slow. Short chats should finish in a few seconds of Apple-side work plus however long the model takes; `/read` or `/save` of a large file can take much longer.
 
 ## Performance and timing
 
-POST body and the streamed answer use **32K of aux RAM** (`$4000–$BFFF`) so the HTTP send is not chopped into tiny bank switches. Chat POSTs no longer write `A2CHAT.PAY` per token.
+POST body and the streamed answer use **32K of aux RAM** (`$4000–$BFFF`). After each reply the top bar shows elapsed seconds, Ollama `eval_count`, and tokens/sec, for example `11s 89t 8/s`.
 
-After each reply the **top inverse bar** and a chat line show something like:
+Wall clock on the help row is ProDOS time when available (`P8` at boot). MegaFlash can supply millisecond elapsed time (`MFMS`). Clock-card IRQs are left masked.
 
-`TIME 12:04:33 8420ms 142tok 16/s MFMS`
-
-Milliseconds are first-token to stream-end on the IP65 ~ms timer (MegaFlash is not polled during TCP). `tok` is Ollama `eval_count`. Tokens/sec still includes model time; with the IIc accelerator on, Apple-side cost shows up as t/s rising.
-
-| Label | Meaning |
-|-------|---------|
-| `NSC+MFMS` | No-Slot Clock for the `HH:MM:SS` stamp; MegaFlash seen |
-| `MFMS` | MegaFlash present, no NSC |
-| `NSC` | No-Slot Clock only |
-| `JIFFY` | No NSC/MegaFlash; elapsed still uses IP65 `timer_read` |
-
-Boot also prints `Clock MFMS` (or `JIFFY` / `NSC`). If the TIME line is missing, you are not running this build.
+Numbers from the B7–B13 bring-up (same LAN, `llama3.2:3b`) are in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Troubleshooting
 
@@ -185,12 +176,13 @@ Boot also prints `Clock MFMS` (or `JIFFY` / `NSC`). If the TIME line is missing,
 | `Probe FAIL` | Ollama not on `0.0.0.0:11434`; firewall; Apple and host not on the same subnet; `HOST=` is a name instead of IPv4 |
 | `----` in the status bar | Ethernet init failed — slot, DHCP, or Uthernet II not seen |
 | `Pull the model or fix MODEL=` | `ollama list` on the host; set `MODEL=` to an exact tag |
-| `send body Timeout` | Shorter prompt and `/new` to shrink history; avoid asking the model to call tools |
+| `send body Timeout` / `send aux Timeout` | Shorter prompt and `/new` to shrink history; do not ask the model to call tools |
 | `cannot open` on `/cat` | PREFIX directory missing, or `make disk` restored an empty PREFIX — recreate the folder and set `PREFIX=` |
 | Save does nothing | Prompt must contain `save`, `write`, `.md`, `.bas`, or `disk` (unless the model emitted `<<A2W>>`) |
 | Illegal filename | Use letters/digits and one period; A2CHAT strips spaces |
-| `/quit` into the monitor | You are not running a build with LC at `$D400` — rebuild from this tree |
-| Chat works, CFG “wrong” after copy | `make disk` overwrote `A2CHAT.CFG` with the sample |
+| `/quit` into the monitor | Rebuild B12 or later (QUIT must not `BIT $C082`) |
+| Chat works, CFG “wrong” after copy | `make disk` / `make hd` overwrote `A2CHAT.CFG` with the sample |
+| Model greets instead of answering | `/new` and retry on B11+; the current prompt is sent in the JSON even if the log is odd |
 
 ## Emulators
 

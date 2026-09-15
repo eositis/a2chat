@@ -7,6 +7,7 @@
         .export         _aux_present
         .export         _aux_write
         .export         _aux_read
+        .export         _aux_mainbank
         .import         popax
         .include        "zeropage.inc"
 
@@ -15,6 +16,9 @@ CLR_RAMRD       = $C002
 SET_RAMRD       = $C003
 CLR_RAMWRT      = $C004
 SET_RAMWRT      = $C005
+
+        .bss
+zpsv:   .res    64
 
         .code
 
@@ -39,6 +43,12 @@ _aux_present:
         lda     #0
         tax
         plp
+        rts
+
+_aux_mainbank:
+        sta     CLR_RAMRD
+        sta     CLR_RAMWRT
+        sta     $C054
         rts
 
 _aux_write:
@@ -73,6 +83,12 @@ _aux_read:
         ora     tmp2
         beq     @rdz
         ldx     #0
+@sv:    lda     $50,x
+        sta     zpsv,x
+        inx
+        cpx     #stub_len
+        bcc     @sv
+        ldx     #0
 @inst:  lda     stub_img,x
         sta     $50,x
         inx
@@ -85,6 +101,12 @@ _aux_read:
         sta     CLR_RAMWRT
         sta     $C054
         plp
+        ldx     #0
+@rs:    lda     zpsv,x
+        sta     $50,x
+        inx
+        cpx     #stub_len
+        bcc     @rs
 @rdz:   rts
 
 set_auxptr:

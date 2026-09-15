@@ -82,14 +82,50 @@ const char *clock_kind_name(void)
 
 void clock_wall(char *dst, unsigned dstsz)
 {
+    unsigned char h, m;
+
     if (!dstsz) {
         return;
+    }
+    if (g_p8 && p8_time(&h, &m)) {
+        put2(g_wall, h);
+        g_wall[2] = ':';
+        put2(g_wall + 3, m);
+        g_wall[5] = ':';
+        g_wall[6] = '0';
+        g_wall[7] = '0';
+        g_wall[8] = 0;
     }
     if (!g_wall[0]) {
         strcpy(g_wall, "--:--:--");
     }
     strncpy(dst, g_wall, dstsz - 1);
     dst[dstsz - 1] = 0;
+}
+
+void clock_stamp(char *dst, unsigned dstsz)
+{
+    unsigned w;
+    unsigned char day, mon, yr;
+
+    if (dstsz < 18) {
+        if (dstsz) {
+            dst[0] = 0;
+        }
+        return;
+    }
+    clock_wall(dst + 9, dstsz - 9);
+    w = (unsigned)*(volatile unsigned char *)0xBF90 |
+        ((unsigned)*(volatile unsigned char *)0xBF91 << 8);
+    day = (unsigned char)(w & 31);
+    mon = (unsigned char)((w >> 5) & 15);
+    yr = (unsigned char)((w >> 9) & 127);
+    put2(dst, yr);
+    dst[2] = '-';
+    put2(dst + 3, mon);
+    dst[5] = '-';
+    put2(dst + 6, day);
+    dst[8] = ' ';
 }
 
 void clock_reset_ms(void)
