@@ -7,7 +7,7 @@
 #include <fcntl.h>
 #include <apple2_filetype.h>
 
-static char iobuf[128];
+#define iobuf g_io80
 
 unsigned est_secs_write(unsigned bytes)
 {

@@ -27,7 +27,7 @@ cd a2chat
 make
 ```
 
-That builds IP65’s `ip65_tcp.lib` + `ip65_apple2_uther2.lib` if needed, then `a2chat.bin` and copies cc65 `loader.system` to `A2CHAT.SYSTEM`. HTTP uses the same software TCP path as telnet65 (`tcp_connect` / `ip65_process`), not wget65’s W5100 on-chip TCP.
+That builds IP65’s `ip65_tcp.lib` + `ip65_apple2_uther2.lib` if needed, then `a2chat.bin`, copies cc65 `loader.system` to `A2CHAT.SYSTEM`, and writes **`a2chat.po`**. HTTP uses the same software TCP path as telnet65 (`tcp_connect` / `ip65_process`), not wget65’s W5100 on-chip TCP.
 
 Host-side parser tests (no Apple II required):
 
@@ -35,14 +35,7 @@ Host-side parser tests (no Apple II required):
 make host-test
 ```
 
-Copy onto a ProDOS disk (or `make disk` with Java + AppleCommander):
-
-```sh
-cd a2chat
-make disk
-```
-
-That writes **`a2chat.po`**, a bootable 140K ProDOS volume `/A2CHAT/` with `PRODOS`, `A2CHAT.SYSTEM` (cc65 loader), `A2CHAT` (BIN at `$0803`), and `A2CHAT.CFG`. With no `BASIC.SYSTEM`, ProDOS starts `A2CHAT.SYSTEM` on boot.
+`make disk` rebuilds only the 140K ProDOS image (Java + AppleCommander). The volume `/A2CHAT/` contains `PRODOS`, `A2CHAT.SYSTEM` (cc65 loader), `A2CHAT` (BIN at `$0803`), and the sample `A2CHAT.CFG`. With no `BASIC.SYSTEM`, ProDOS starts `A2CHAT.SYSTEM` on boot. Restore your real `HOST` / `MODEL` / `PREFIX` after each image rebuild.
 
 Manual AppleCommander layout (wget65-style):
 

@@ -3,38 +3,19 @@
 #include <string.h>
 #include <stdlib.h>
 #include <conio.h>
-#include <unistd.h>
-#include <device.h>
 #include <cc65.h>
 #include <ip65.h>
 
-static char pathbuf[80];
-static char progdir[80];
+static char pathbuf[A2CHAT_PATH_MAX];
+static char progdir[A2CHAT_PATH_MAX];
 static char line[A2CHAT_LINE_MAX];
 
 char *self_path(const char *filename)
 {
-    const char *dir;
-    unsigned n;
-
-    dir = g_cfg.prefix[0] ? g_cfg.prefix : progdir;
-    pathbuf[0] = 0;
-    if (dir[0]) {
-        strncpy(pathbuf, dir, sizeof(pathbuf) - 1);
-        pathbuf[sizeof(pathbuf) - 1] = 0;
-        n = (unsigned)strlen(pathbuf);
-        if (n && pathbuf[n - 1] != '/' && n + 1 < sizeof(pathbuf)) {
-            pathbuf[n++] = '/';
-            pathbuf[n] = 0;
-        }
-    }
-    strncat(pathbuf, filename, sizeof(pathbuf) - 1 - strlen(pathbuf));
+    /* App files live in the ProDOS launch directory (current prefix). */
+    strncpy(pathbuf, filename, sizeof(pathbuf) - 1);
+    pathbuf[sizeof(pathbuf) - 1] = 0;
     return pathbuf;
-}
-
-static void reset_cwd(void)
-{
-    chdir("");
 }
 
 int main(int argc, char *argv[])
@@ -42,6 +23,11 @@ int main(int argc, char *argv[])
     char *slash;
     int cfg_ok;
     static uint8_t first_chat = 1;
+
+#ifndef A2CHAT_HOST
+    __asm__("cld");
+    __asm__("sei");
+#endif
 
     progdir[0] = 0;
     if (argc > 0 && argv[0] && argv[0][0]) {
@@ -59,25 +45,17 @@ int main(int argc, char *argv[])
         /* pause on exit when launched from BASIC-ish */
     }
 
-    if (progdir[0]) {
-        chdir(progdir);
-        atexit(reset_cwd);
-    } else {
-        char cwd[64];
-        if (!*getcwd(cwd, sizeof(cwd))) {
-            chdir(getdevicedir(getcurrentdevice(), cwd, sizeof(cwd)));
-            atexit(reset_cwd);
-        }
+#ifndef A2CHAT_HOST
+    if (!progdir[0]) {
+        p8_prefix(progdir);
     }
+#endif
 
     cfg_ok = cfg_load_first(&g_cfg);
-    if (g_cfg.prefix[0]) {
-        if (chdir(g_cfg.prefix) != 0) {
-            /* keep progdir cwd; tools still use absolute PREFIX paths */
-        }
-    }
     g_slot = slot_resolve(g_cfg.slot);
     ui_init();
+    clock_init();
+    ui_redraw_chrome();
     if (net_init(g_slot) != 0) {
         ui_print("Continuing offline. Slash commands still work.");
         ui_nl();
@@ -95,7 +73,20 @@ int main(int argc, char *argv[])
     ui_print("Data ");
     ui_print(g_cfg.prefix[0] ? g_cfg.prefix : (progdir[0] ? progdir : "(cwd)"));
     ui_nl();
+    ui_print("Clock ");
+    ui_print(clock_kind_name());
+    ui_print(" ");
+    {
+        char t[10];
+        clock_wall(t, sizeof t);
+        ui_print(t);
+    }
+    ui_nl();
     net_diag_ollama();
+#ifndef A2CHAT_HOST
+    __asm__("cld");
+    __asm__("sei");
+#endif
 
     for (;;) {
         ui_prompt(line, A2CHAT_LINE_MAX);

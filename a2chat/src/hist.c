@@ -2,9 +2,8 @@
 #include <string.h>
 #include <stdio.h>
 
-#ifndef A2CHAT_HOST
-#pragma code-name ("LC")
-#endif
+/* hist uses fopen/MLI: must live in MAIN. LC $Dxxx is unmapped across
+ * ProDOS and RTS lands in Applesoft ($D983 dump). */
 
 #define DEFAULT_HISTCAP 0x7FFFu
 #define DEFAULT_MAXHIST 4096u
@@ -21,7 +20,7 @@ static const char *hist_path(void)
 }
 #endif
 
-static char iobuf[128];
+#define iobuf g_io80
 
 long hist_size(void)
 {
@@ -94,10 +93,37 @@ static int hist_compact(void)
         pos += 3 + (long)len;
     }
 #ifndef A2CHAT_HOST
-    out = fopen(self_path("A2CHAT.HC"), "wb");
+    {
+        unsigned au = 0;
+        uint16_t off;
+        uint16_t chunk;
+
+        while ((n = fread(iobuf, 1, sizeof(iobuf), in)) > 0) {
+            if (au + (unsigned)n > A2CHAT_AUX_POST_MAX) {
+                break;
+            }
+            aux_write(au, (const unsigned char *)iobuf, (unsigned)n);
+            au += (unsigned)n;
+        }
+        fclose(in);
+        out = fopen(self_path("A2CHAT.HC"), "wb");
+        if (!out) {
+            return -1;
+        }
+        off = 0;
+        while (off < au) {
+            chunk = (uint16_t)sizeof(iobuf);
+            if ((unsigned)off + chunk > au) {
+                chunk = (uint16_t)(au - off);
+            }
+            aux_read(off, (unsigned char *)iobuf, chunk);
+            fwrite(iobuf, 1, chunk, out);
+            off += chunk;
+        }
+        fclose(out);
+    }
 #else
     out = fopen("A2CHAT.HC", "wb");
-#endif
     if (!out) {
         fclose(in);
         return -1;
@@ -107,11 +133,11 @@ static int hist_compact(void)
     }
     fclose(in);
     fclose(out);
+#endif
     {
-        static char hc[80];
-        strcpy(hc, self_path("A2CHAT.HC"));
+        strcpy(iobuf, self_path("A2CHAT.HC"));
         remove(hist_path());
-        rename(hc, hist_path());
+        rename(iobuf, hist_path());
     }
     return 0;
 }
@@ -137,6 +163,10 @@ int hist_append(char type, const char *data, uint16_t len)
 {
     FILE *f;
 
+#ifndef A2CHAT_HOST
+    __asm__("cld");
+#endif
+
     f = fopen(hist_path(), "ab");
     if (!f) {
         f = fopen(hist_path(), "wb");
@@ -160,6 +190,10 @@ int hist_append_aux(char type, uint16_t len)
 {
     FILE *out;
     uint16_t off;
+
+#ifndef A2CHAT_HOST
+    __asm__("cld");
+#endif
 
     if (len == 0) {
         return 0;
@@ -192,12 +226,125 @@ int hist_append_aux(char type, uint16_t len)
 
 void hist_new(void)
 {
-    FILE *f = fopen(hist_path(), "wb");
+    FILE *f;
+
+#ifndef A2CHAT_HOST
+    __asm__("cld");
+#endif
+    f = fopen(hist_path(), "wb");
     if (f) {
         fclose(f);
     }
 }
 
+#ifndef A2CHAT_HOST
+uint16_t hist_aux_load(void)
+{
+    FILE *f;
+    uint16_t au = 0;
+    size_t n;
+
+    __asm__("cld");
+    f = fopen(hist_path(), "rb");
+    if (!f) {
+        return 0;
+    }
+    while (au < A2CHAT_AUX_POST_MAX) {
+        uint16_t room = (uint16_t)(A2CHAT_AUX_POST_MAX - au);
+        uint16_t want = (uint16_t)sizeof(iobuf);
+        if (want > room) {
+            want = room;
+        }
+        n = fread(iobuf, 1, want, f);
+        if (n == 0) {
+            break;
+        }
+        aux_write(au, (unsigned char *)iobuf, (unsigned)n);
+        au = (uint16_t)(au + (uint16_t)n);
+        if (n < want) {
+            break;
+        }
+    }
+    fclose(f);
+    return au;
+}
+
+void hist_aux_to_json(FILE *body, uint16_t tot)
+{
+    uint16_t pos = 0;
+    uint16_t start = 0;
+    uint16_t budget;
+
+    if (!tot) {
+        return;
+    }
+    budget = g_cfg.maxhist ? g_cfg.maxhist : DEFAULT_MAXHIST;
+    if (tot > budget) {
+        start = (uint16_t)(tot - budget);
+    }
+    while (pos + 3 <= tot) {
+        unsigned char hdr[3];
+        int t;
+        uint16_t len;
+        uint16_t left;
+        uint16_t rec;
+        int emit;
+
+        aux_read(pos, hdr, 3);
+        t = hdr[0];
+        if (t != 'U' && t != 'A' && t != 'T') {
+            break;
+        }
+        len = (uint16_t)(hdr[1] | ((uint16_t)hdr[2] << 8));
+        rec = pos;
+        pos = (uint16_t)(pos + 3);
+        if ((uint16_t)(pos + len) > tot) {
+            break;
+        }
+        emit = (rec >= start);
+        if (t == 'A' && len == 10) {
+            aux_read(pos, (unsigned char *)iobuf, 10);
+            pos = (uint16_t)(pos + 10);
+            if (!memcmp(iobuf, "(streamed)", 10)) {
+                continue;
+            }
+            if (emit) {
+                fputc(',', body);
+                fputs("{\"role\":\"assistant\",\"content\":\"", body);
+                json_escape_fwrite(body, iobuf, 10);
+                fputs("\"}", body);
+            }
+            continue;
+        }
+        if (!emit) {
+            pos = (uint16_t)(pos + len);
+            continue;
+        }
+        fputc(',', body);
+        if (t == 'A') {
+            fputs("{\"role\":\"assistant\",\"content\":\"", body);
+        } else if (t == 'T') {
+            fputs("{\"role\":\"user\",\"content\":\"TOOL: ", body);
+        } else {
+            fputs("{\"role\":\"user\",\"content\":\"", body);
+        }
+        left = len;
+        while (left) {
+            uint16_t n = left;
+            if (n > sizeof(iobuf)) {
+                n = (uint16_t)sizeof(iobuf);
+            }
+            aux_read(pos, (unsigned char *)iobuf, n);
+            json_escape_fwrite(body, iobuf, n);
+            pos = (uint16_t)(pos + n);
+            left = (uint16_t)(left - n);
+        }
+        fputs("\"}", body);
+    }
+}
+#endif
+
+#ifdef A2CHAT_HOST
 int hist_write_messages(FILE *body)
 {
     FILE *f;
@@ -206,6 +353,9 @@ int hist_write_messages(FILE *body)
     long start;
     uint16_t budget;
 
+#ifndef A2CHAT_HOST
+    __asm__("cld");
+#endif
     f = fopen(hist_path(), "rb");
     if (!f) {
         return 0;
@@ -290,3 +440,4 @@ int hist_write_messages(FILE *body)
     fclose(f);
     return 0;
 }
+#endif

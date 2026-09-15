@@ -21,9 +21,11 @@ static uint8_t chat_y = CHAT_TOP;
 static uint8_t chat_x = 0;
 static char outbuf[16];
 static uint8_t outn;
+static uint8_t have_perf;
 
 uint8_t g_slot;
 char g_status[81];
+char g_io80[80];
 
 void ui_clear_chat(void);
 
@@ -115,28 +117,72 @@ static void chat_clear_line(uint8_t row)
     PAGE2_OFF = 0;
 }
 
+void ui_set_perf(const char *s)
+{
+    have_perf = 0;
+    if (!s || !s[0]) {
+        return;
+    }
+    strncpy(g_status, s, 80);
+    g_status[80] = 0;
+    have_perf = 1;
+}
+
+static void help_row(void)
+{
+    char t[10];
+    const char *h = "/config /ping /cat /new /model /read /save /quit";
+    const char *k;
+
+    clock_wall(t, sizeof t);
+    k = clock_kind_name();
+    gotoxy(0, HELP_ROW);
+    revers(1);
+    cputs(h);
+    cputs(" B");
+    cputs(A2CHAT_BUILD_STR);
+    cclear((unsigned char)(61 - strlen(h) - 2 - (unsigned)strlen(A2CHAT_BUILD_STR)));
+    cputs(t);
+    cputc(' ');
+    cputs(k);
+    cclear((unsigned char)(80 - 62 - strlen(t) - strlen(k)));
+    revers(0);
+}
+
 void ui_redraw_chrome(void)
 {
     char line[81];
+
+#ifndef A2CHAT_HOST
+    __asm__("cld");
+    __asm__("sei");
+#endif
+
+    if (have_perf) {
+        sprintf(line, "A2CHAT  %s:%u  %-10s %s",
+                g_cfg.host, (unsigned)g_cfg.port, g_cfg.model, g_status);
+    } else {
+        sprintf(line, "A2CHAT  %s:%u  %-12s  Slot%u  [%s]",
+                g_cfg.host, (unsigned)g_cfg.port, g_cfg.model,
+                (unsigned)g_slot, g_net_ok ? "Conn" : "----");
+    }
+    line[80] = 0;
     gotoxy(0, CHROME_TOP);
     revers(1);
-    sprintf(line, "A2CHAT  %s:%u  %-12s  Slot%u  [%s]",
-            g_cfg.host, (unsigned)g_cfg.port, g_cfg.model,
-            (unsigned)g_slot, g_net_ok ? "Conn" : "----");
-    line[80] = 0;
     cputs(line);
-    cclear(80 - (unsigned char)strlen(line));
+    cclear((unsigned char)(80 - strlen(line)));
     revers(0);
-    gotoxy(0, HELP_ROW);
-    revers(1);
-    cputs("/config /ping /cat /new /model /read /save /quit");
-    cclear((unsigned char)(80 - strlen("/config /ping /cat /new /model /read /save /quit")));
-    revers(0);
+    help_row();
 }
 
 void ui_init(void)
 {
     videomode(VIDEOMODE_80COL);
+#ifndef A2CHAT_HOST
+    /* videomode/PR#3 CLI; clock IRQ SED then ROM COUT dies at $FDF7. */
+    __asm__("cld");
+    __asm__("sei");
+#endif
     clrscr();
     cursor(1);
     chat_y = CHAT_TOP;
@@ -149,6 +195,10 @@ void ui_init(void)
 void ui_clear_chat(void)
 {
     uint8_t r;
+
+#ifndef A2CHAT_HOST
+    __asm__("sei");
+#endif
 
     outn = 0;
     chat_x = 0;
@@ -248,23 +298,71 @@ void ui_print_ch(char ch)
         ui_flush();
     }
     outbuf[outn++] = ch;
-    if (outn >= sizeof(outbuf) || ch == ' ') {
+    if (outn >= sizeof(outbuf)) {
         ui_flush();
     }
 }
 
 void ui_print(const char *s)
 {
+#ifndef A2CHAT_HOST
+    __asm__("cld");
+    __asm__("sei");
+#endif
     while (*s) {
         ui_print_ch(*s++);
     }
     ui_flush();
 }
 
+void ui_print_n(const char *s, unsigned n)
+{
+    unsigned i = 0;
+
+    ui_flush();
+    while (i < n) {
+        char ch = s[i];
+        uint8_t room;
+        uint8_t take;
+
+        if (ch == '\n' || ch == '\r') {
+            ui_nl();
+            i++;
+            continue;
+        }
+        if (chat_x >= 80) {
+            chat_x = 0;
+            if (chat_y < CHAT_BOT) {
+                chat_y++;
+            } else {
+                chat_y = CHAT_TOP;
+            }
+            chat_clear_line(chat_y);
+        }
+        room = (uint8_t)(80 - chat_x);
+        take = 0;
+        while ((unsigned)take < room && i + take < n) {
+            char c = s[i + take];
+            if (c == '\n' || c == '\r') {
+                break;
+            }
+            take++;
+        }
+        if (!take) {
+            i++;
+            continue;
+        }
+        chat_blit(chat_x, chat_y, s + i, take, 0);
+        chat_x = (uint8_t)(chat_x + take);
+        i += take;
+    }
+}
+
 void ui_prompt(char *buf, uint8_t maxlen)
 {
     uint8_t n = 0;
     ui_flush();
+    help_row();
     gotoxy(0, INPUT_ROW);
     cclear(80);
     gotoxy(0, INPUT_ROW + 1);

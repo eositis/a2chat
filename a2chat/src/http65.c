@@ -13,12 +13,13 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-#define TCP_MAX 1460
+#define TCP_MAX 900
 #define HTTP_TX_MAX A2CHAT_AUX_POST_MAX
-#define BOUNCE 160
+#define BOUNCE 16
 
 static unsigned char bounce[BOUNCE];
-static char hdr[190];
+static char hdr[128];
+static char bod[48];
 
 static uint8_t rx_eof;
 static uint8_t rx_have_hdr;
@@ -28,12 +29,13 @@ static uint16_t rx_chunk_left;
 static uint16_t rx_hlen;
 static uint16_t rx_accum_len;
 static uint16_t rx_accum_max;
-static char rx_hdr[160];
+static char rx_hdr[48];
 static char rx_hex[8];
 static uint8_t rx_hexn;
-static void (*rx_on_byte)(char ch, void *user);
+static void (*rx_on_bytes)(const char *p, unsigned n, void *user);
 static void *rx_user;
 static char *rx_accum;
+static uint8_t rx_hdr_st;
 
 static int http_status_code(const char *hdr)
 {
@@ -51,8 +53,9 @@ static int http_status_code(const char *hdr)
 static void feed_body(char ch)
 {
     if (!rx_chunked) {
-        if (rx_on_byte) {
-            rx_on_byte(ch, rx_user);
+        if (rx_on_bytes) {
+            char b = ch;
+            rx_on_bytes(&b, 1, rx_user);
         }
         if (rx_accum && rx_accum_len < rx_accum_max - 1) {
             rx_accum[rx_accum_len++] = ch;
@@ -93,8 +96,9 @@ static void feed_body(char ch)
         return;
     }
     if (rx_chunk_st == 1) {
-        if (rx_on_byte) {
-            rx_on_byte(ch, rx_user);
+        if (rx_on_bytes) {
+            char b = ch;
+            rx_on_bytes(&b, 1, rx_user);
         }
         if (rx_accum && rx_accum_len < rx_accum_max - 1) {
             rx_accum[rx_accum_len++] = ch;
@@ -122,28 +126,44 @@ static void __fastcall__ on_tcp(const uint8_t *buf, int16_t len)
         rx_eof = 1;
         return;
     }
-    for (i = 0; i < (uint16_t)len; ++i) {
-        char ch = (char)buf[i];
+    i = 0;
+    while (i < (uint16_t)len && !rx_have_hdr) {
+        char ch = (char)buf[i++];
 
-        if (!rx_have_hdr) {
-            if (rx_hlen < sizeof(rx_hdr) - 1) {
-                rx_hdr[rx_hlen++] = ch;
-                rx_hdr[rx_hlen] = 0;
-            }
-            if (rx_hlen >= 4 && memcmp(rx_hdr + rx_hlen - 4, "\r\n\r\n", 4) == 0) {
-                if (strstr(rx_hdr, "chunked") || strstr(rx_hdr, "Chunked")) {
-                    rx_chunked = 1;
-                }
-                rx_have_hdr = 1;
-            }
+        if (rx_hlen < sizeof(rx_hdr) - 1) {
+            rx_hdr[rx_hlen++] = ch;
+            rx_hdr[rx_hlen] = 0;
+        }
+        if (ch == '\r' && (rx_hdr_st == 0 || rx_hdr_st == 2)) {
+            rx_hdr_st++;
+        } else if (ch == '\n' && (rx_hdr_st == 1 || rx_hdr_st == 3)) {
+            rx_hdr_st++;
+        } else if (ch == '\r') {
+            rx_hdr_st = 1;
         } else {
-            feed_body(ch);
+            rx_hdr_st = 0;
+        }
+        if (rx_hdr_st == 4) {
+            if (strstr(rx_hdr, "chunked") || strstr(rx_hdr, "Chunked")) {
+                rx_chunked = 1;
+            }
+            rx_have_hdr = 1;
+        }
+    }
+    if (rx_have_hdr && i < (uint16_t)len) {
+        if (!rx_chunked && rx_on_bytes) {
+            rx_on_bytes((const char *)buf + i, (unsigned)((uint16_t)len - i),
+                        rx_user);
+        } else {
+            while (i < (uint16_t)len) {
+                feed_body((char)buf[i++]);
+            }
         }
     }
 }
 
-static void rx_reset(void (*on_byte)(char ch, void *user), void *user,
-                     char *accum, uint16_t accum_max)
+static void rx_reset(void (*on_bytes)(const char *p, unsigned n, void *user),
+                     void *user, char *accum, uint16_t accum_max)
 {
     rx_eof = 0;
     rx_have_hdr = 0;
@@ -151,9 +171,10 @@ static void rx_reset(void (*on_byte)(char ch, void *user), void *user,
     rx_chunk_st = 0;
     rx_chunk_left = 0;
     rx_hlen = 0;
+    rx_hdr_st = 0;
     rx_hexn = 0;
     rx_hdr[0] = 0;
-    rx_on_byte = on_byte;
+    rx_on_bytes = on_bytes;
     rx_user = user;
     rx_accum = accum;
     rx_accum_max = accum_max;
@@ -209,10 +230,8 @@ static int send_all(const uint8_t *p, uint16_t len)
     return 0;
 }
 
-static int send_aux(uint16_t total)
+static int send_aux(uint16_t off, uint16_t total)
 {
-    uint16_t off = 0;
-
     while (off < total) {
         uint16_t n = (uint16_t)(total - off);
         if (n > BOUNCE) {
@@ -284,7 +303,8 @@ static int finish_status(void)
 
 int http_post_file(uint32_t addr, uint16_t port, const char *url_path,
                    const char *body_path,
-                   void (*on_byte)(char ch, void *user), void *user)
+                   void (*on_bytes)(const char *p, unsigned n, void *user),
+                   void *user)
 {
     FILE *bf;
     long clen;
@@ -292,7 +312,6 @@ int http_post_file(uint32_t addr, uint16_t port, const char *url_path,
     uint16_t got;
     uint16_t total;
     int rc;
-    static char bod[80];
 
     strncpy(bod, body_path, sizeof(bod) - 1);
     bod[sizeof(bod) - 1] = 0;
@@ -356,7 +375,7 @@ int http_post_file(uint32_t addr, uint16_t port, const char *url_path,
         return -1;
     }
 
-    rx_reset(on_byte, user, 0, 0);
+    rx_reset(on_bytes, user, 0, 0);
     {
         uint8_t tries;
 
@@ -366,7 +385,9 @@ int http_post_file(uint32_t addr, uint16_t port, const char *url_path,
                 return -1;
             }
             ui_status("POST /api/chat ...");
-            if (send_aux(total) == 0) {
+            /* Headers from MAIN (same as GET /api/tags); body from aux. */
+            if (send_str(hdr) == 0 && send_aux(hlen, total) == 0) {
+                clock_reset_ms();
                 break;
             }
             tcp_close();
@@ -375,10 +396,6 @@ int http_post_file(uint32_t addr, uint16_t port, const char *url_path,
                 return -1;
             }
         }
-    }
-    if (user) {
-        struct jsonscan *js = (struct jsonscan *)user;
-        js->pay = fopen(self_path("A2CHAT.PAY"), "wb");
     }
     if (wait_done() < 0) {
         return -1;
@@ -392,25 +409,23 @@ int http_post_file(uint32_t addr, uint16_t port, const char *url_path,
 
 int http_probe_tags(uint32_t addr, uint16_t port)
 {
-    static char req[160];
-    static char body[160];
     int rc;
 
     g_http_err[0] = 0;
     ui_status("TCP connect to Ollama...");
-    rx_reset(0, 0, body, sizeof(body));
+    rx_reset(0, 0, bod, sizeof(bod));
     if (tcp_connect(addr, port, on_tcp)) {
         strcpy(g_http_err, "TCP connect failed");
         return -1;
     }
-    sprintf(req,
+    sprintf(hdr,
             "GET /api/tags HTTP/1.0\r\n"
             "Host: %s:%u\r\n"
             "Connection: close\r\n"
             "\r\n",
             g_cfg.host, (unsigned)port);
     ui_status("GET /api/tags ...");
-    if (send_str(req) < 0) {
+    if (send_str(hdr) < 0) {
         tcp_close();
         strcpy(g_http_err, "TCP up, send failed");
         return -1;
@@ -422,7 +437,7 @@ int http_probe_tags(uint32_t addr, uint16_t port)
     if (rc < 0) {
         return rc;
     }
-    if (g_cfg.model[0] && strstr(body, g_cfg.model)) {
+    if (g_cfg.model[0] && strstr(bod, g_cfg.model)) {
         strcpy(g_http_err, "HTTP 200, model listed");
         return 1;
     }

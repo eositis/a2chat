@@ -4,6 +4,8 @@ traffic/
 a2chat/a2chat.bin
 a2chat/a2chat.map
 a2chat/a2chat.po
+a2chat/a2chat.hdv
+a2chat/build/
 a2chat/A2CHAT.SYSTEM
 a2chat/A2CHAT.CFG
 a2chat/tests/test_host

@@ -1,17 +1,19 @@
 ;
-; Page-aligned ProDOS I/O buffers (linker FILEIO at $B400).
-; Default cc65 iobuf uses posix_memalign on the heap; after linking
-; ip65_tcp.lib the heap cannot hold two 1K buffers (PAY + BOD).
+; One 1K ProDOS I/O buffer (FILEIO $BA00). Also eth_outp: files are closed
+; during tcp_send so RX/TX are not the same RAM (send body Timeout).
 ;
         .export         iobuf_alloc, iobuf_free
+        .export         eth_outp
         .import         incsp2, popptr1
         .include        "zeropage.inc"
         .include        "errno.inc"
 
-NBUFS   = 2
+NBUFS   = 1
 
 .segment "FILEIO"
-bufs:   .res            NBUFS * $0400
+bufs:
+eth_outp:
+        .res            NBUFS * $0400
 
 .bss
 used:   .res            NBUFS

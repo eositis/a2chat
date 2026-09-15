@@ -3,32 +3,39 @@
 #include <stdio.h>
 #include <ctype.h>
 
-static int win_ends(const struct jsonscan *j, const char *suf)
+static int win_eq(const struct jsonscan *j, const char *suf, uint8_t n)
 {
-    size_t n = strlen(suf);
+    unsigned i;
+    unsigned p;
+
     if (j->winlen < n) {
         return 0;
     }
-    return memcmp(j->win + j->winlen - n, suf, n) == 0;
+    p = j->winpos;
+    i = n;
+    while (i) {
+        i--;
+        p = (unsigned)((p + (A2CHAT_WIN - 1)) & (A2CHAT_WIN - 1));
+        if (j->win[p] != suf[i]) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
-void jsonscan_init(struct jsonscan *j)
+#ifdef A2CHAT_HOST
+static int win_ends(const struct jsonscan *j, const char *suf)
 {
-    memset(j, 0, sizeof(*j));
+    return win_eq(j, suf, (uint8_t)strlen(suf));
 }
-
-void jsonscan_on_byte(char ch, void *user)
-{
-    jsonscan_feed((struct jsonscan *)user, ch);
-}
+#endif
 
 static void win_add(struct jsonscan *j, char ch)
 {
+    j->win[j->winpos] = ch;
+    j->winpos = (uint8_t)((j->winpos + 1) & (A2CHAT_WIN - 1));
     if (j->winlen < A2CHAT_WIN) {
-        j->win[j->winlen++] = ch;
-    } else {
-        memmove(j->win, j->win + 1, A2CHAT_WIN - 1);
-        j->win[A2CHAT_WIN - 1] = ch;
+        j->winlen++;
     }
 }
 
@@ -81,6 +88,10 @@ static void end_num(struct jsonscan *j)
         j->arg_length = v;
     } else if (j->mode == JS_NUM_AUX) {
         j->arg_auxtype = v;
+    } else if (j->mode == JS_NUM_EVAL) {
+        j->eval_count = (uint16_t)v;
+    } else if (j->mode == JS_NUM_PROMPT_EVAL) {
+        j->prompt_eval_count = (uint16_t)v;
     }
     j->numlen = 0;
     j->mode = JS_SEEK;
@@ -88,13 +99,17 @@ static void end_num(struct jsonscan *j)
 
 void jsonscan_feed(struct jsonscan *j, char ch)
 {
-    if (j->mode == JS_NUM_OFFSET || j->mode == JS_NUM_LENGTH || j->mode == JS_NUM_AUX) {
+    if (j->mode == JS_NUM_OFFSET || j->mode == JS_NUM_LENGTH ||
+        j->mode == JS_NUM_AUX || j->mode == JS_NUM_EVAL ||
+        j->mode == JS_NUM_PROMPT_EVAL) {
+        if (ch == ' ' || ch == '\t') {
+            return;
+        }
         if (ch >= '0' && ch <= '9' && j->numlen < 7) {
             j->numbuf[j->numlen++] = ch;
             return;
         }
         end_num(j);
-        /* fall through to seek with this char */
     }
 
     if (j->mode == JS_MSG_CONTENT || j->mode == JS_TOOL_NAME ||
@@ -132,6 +147,7 @@ void jsonscan_feed(struct jsonscan *j, char ch)
         } else if (ch == '"') {
             j->mode = JS_SEEK;
             j->winlen = 0;
+            j->winpos = 0;
             return;
         }
 
@@ -161,23 +177,38 @@ void jsonscan_feed(struct jsonscan *j, char ch)
 
     win_add(j, ch);
 
+    if (ch == ':') {
+        if (win_eq(j, "_eval_count\":", 13)) {
+            j->mode = JS_NUM_PROMPT_EVAL;
+            j->numlen = 0;
+            return;
+        }
+        if (win_eq(j, "\"eval_count\":", 13)) {
+            j->mode = JS_NUM_EVAL;
+            j->numlen = 0;
+            return;
+        }
+    } else if (ch == 'e') {
+        if (win_eq(j, "\"done\":true", 11) || win_eq(j, "\"done\": true", 12)) {
+            j->done = 1;
+        }
+    } else if (ch == '"') {
+        if (win_eq(j, "\"content\":\"", 11)) {
+            j->mode = j->seen_arguments ? JS_ARG_CONTENT : JS_MSG_CONTENT;
+            j->escape = 0;
+            return;
+        }
+    }
+#ifdef A2CHAT_HOST
     if (win_ends(j, "\"arguments\"")) {
         j->seen_arguments = 1;
     }
     if (win_ends(j, "tool_calls")) {
         j->seen_tool_calls = 1;
     }
-    if (win_ends(j, "\"done\":true") || win_ends(j, "\"done\": true")) {
-        j->done = 1;
-    }
-    if (win_ends(j, "\"content\":\"")) {
-        j->mode = j->seen_arguments ? JS_ARG_CONTENT : JS_MSG_CONTENT;
-        j->escape = 0;
-        return;
-    }
+#endif
+#ifdef A2CHAT_HOST
     if (win_ends(j, "\"name\":\"")) {
-        /* llama3.2 often dumps a fake call in message.content; only
-         * honor name when this NDJSON object had tool_calls. */
         if (!j->seen_tool_calls) {
             return;
         }
@@ -218,6 +249,60 @@ void jsonscan_feed(struct jsonscan *j, char ch)
         j->numlen = 0;
         return;
     }
+#endif
+}
+
+void jsonscan_feed_buf(struct jsonscan *j, const char *p, unsigned n)
+{
+    unsigned i = 0;
+
+    while (i < n) {
+        if (j->mode == JS_MSG_CONTENT && !j->escape && !j->unicode_n) {
+            unsigned k = 0;
+            unsigned left = n - i;
+            const char *q = p + i;
+
+            while (k < left) {
+                char c = q[k];
+                if (c == '"' || c == '\\') {
+                    break;
+                }
+                k++;
+            }
+            if (k) {
+                unsigned t;
+                for (t = 0; t < k; t++) {
+                    win_add(j, q[t]);
+                }
+                if (j->on_span) {
+                    j->on_span(q, k, j->user);
+                } else {
+                    for (t = 0; t < k; t++) {
+                        emit_content(j, q[t]);
+                    }
+                }
+                i += k;
+                continue;
+            }
+        }
+        jsonscan_feed(j, p[i]);
+        i++;
+    }
+}
+
+void jsonscan_init(struct jsonscan *j)
+{
+    memset(j, 0, sizeof(*j));
+}
+
+void jsonscan_on_byte(char ch, void *user)
+{
+    jsonscan_feed((struct jsonscan *)user, ch);
+}
+
+void jsonscan_on_bytes(const char *p, unsigned n, void *user)
+{
+    jsonscan_feed_buf((struct jsonscan *)user, p, n);
 }
 
 void json_escape_fwrite(FILE *f, const char *s, unsigned n)
@@ -248,6 +333,7 @@ void json_escape_fwrite(FILE *f, const char *s, unsigned n)
     }
 }
 
+#ifdef A2CHAT_HOST
 unsigned json_escape_len(const char *s, unsigned n)
 {
     unsigned i, len = 0;
@@ -266,10 +352,14 @@ unsigned json_escape_len(const char *s, unsigned n)
     }
     return len;
 }
+#endif
 
 #ifndef A2CHAT_HOST
-#pragma rodata-name ("LC")
-#endif
+void json_write_tools(FILE *f)
+{
+    (void)f;
+}
+#else
 static const char TOOLS_JSON[] =
     "\"tools\":["
     "{\"type\":\"function\",\"function\":{\"name\":\"list_dir\","
@@ -290,8 +380,12 @@ static const char TOOLS_JSON[] =
     "\"path\":{\"type\":\"string\"},"
     "\"hex\":{\"type\":\"string\"},"
     "\"type\":{\"type\":\"string\"}},\"required\":[\"path\",\"hex\"]}}}]";
-#ifndef A2CHAT_HOST
-#pragma rodata-name ("RODATA")
+
+void json_write_tools(FILE *f)
+{
+    fputs("],", f);
+    fputs(TOOLS_JSON, f);
+}
 #endif
 
 void json_write_prelude(FILE *f, const char *model)
@@ -299,13 +393,6 @@ void json_write_prelude(FILE *f, const char *model)
     fputs("{\"model\":\"", f);
             json_escape_fwrite(f, model, (unsigned)strlen(model));
     fputs("\",\"stream\":true,\"think\":false,\"messages\":[", f);
-}
-
-void json_write_tools(FILE *f)
-{
-    /* Close messages[], then sibling "tools":[...] on the root object. */
-    fputs("],", f);
-    fputs(TOOLS_JSON, f);
 }
 
 void json_write_epilogue(FILE *f)

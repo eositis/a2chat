@@ -119,7 +119,7 @@ static FILE *cfg_open(const char *path)
 int cfg_load(struct a2cfg *c, const char *path)
 {
     FILE *f;
-    static char line[96];
+    char line[80];
     unsigned n;
     int ch;
     int cr;
@@ -187,26 +187,18 @@ int cfg_load(struct a2cfg *c, const char *path)
 #ifndef A2CHAT_HOST
 int cfg_load_first(struct a2cfg *c)
 {
-    const char *try_path[4];
+    const char *try_path[3];
     unsigned i;
 
-    try_path[0] = self_path("A2CHAT.CFG");
-    try_path[1] = "A2CHAT.CFG";
-    try_path[2] = "A2CHAT.CF";
-    try_path[3] = 0;
+    try_path[0] = "A2CHAT.CFG";
+    try_path[1] = "A2CHAT.CF";
+    try_path[2] = 0;
 
     g_cfg_loaded[0] = 0;
     for (i = 0; try_path[i]; i++) {
-        /* self_path reuses a buffer; copy first candidate */
-        if (i == 0) {
-            strncpy(g_cfg_loaded, try_path[0], sizeof(g_cfg_loaded) - 1);
-            g_cfg_loaded[sizeof(g_cfg_loaded) - 1] = 0;
-            if (cfg_load(c, g_cfg_loaded) == 0) {
-                return 0;
-            }
-        } else if (cfg_load(c, try_path[i]) == 0) {
-            strncpy(g_cfg_loaded, try_path[i], sizeof(g_cfg_loaded) - 1);
-            g_cfg_loaded[sizeof(g_cfg_loaded) - 1] = 0;
+        strncpy(g_cfg_loaded, try_path[i], sizeof(g_cfg_loaded) - 1);
+        g_cfg_loaded[sizeof(g_cfg_loaded) - 1] = 0;
+        if (cfg_load(c, g_cfg_loaded) == 0) {
             return 0;
         }
     }

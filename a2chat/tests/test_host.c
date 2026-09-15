@@ -46,6 +46,11 @@ int main(void)
         fprintf(stderr, "expected done\n");
         return 1;
     }
+    if (j.eval_count != 7 || j.prompt_eval_count != 3) {
+        fprintf(stderr, "eval_count %u prompt %u\n", j.eval_count,
+                j.prompt_eval_count);
+        return 1;
+    }
 
     jsonscan_init(&j);
     j.on_content = collect;

@@ -9,16 +9,14 @@
 #define MAX_HOPS 8
 
 static const char SYS_PROMPT[] =
-    "Apple IIe ProDOS. No C: paths. "
-    "ProDOS names: 15 chars, start with a letter, A-Z 0-9 and one period, no spaces. "
-    "Save as <<A2W NAME TYP>>file<<A2E>> TYP TXT, BAS, or BIN.";
+    "Friendly Apple II chat assistant. Answer the user warmly.";
 
 static const char WPRE[] = "<<A2W ";
 static const char WEND[] = "<<A2E>>";
 
 static uint16_t ans_len;
 static uint8_t ans_n;
-static char ans_buf[32];
+static char ans_buf[16];
 static uint8_t wm;
 static uint8_t wmode;
 static uint8_t wendm;
@@ -26,7 +24,9 @@ static uint8_t wgot;
 static uint8_t wpn;
 static uint8_t wtn;
 static FILE *wpay;
-static char scratch[96];
+static char scratch[72];
+static uint8_t saw_first;
+static uint32_t t_first;
 
 static void wreset(void)
 {
@@ -37,7 +37,7 @@ static void wreset(void)
     wpn = 0;
     wtn = 0;
     scratch[0] = 0;
-    scratch[80] = 0;
+    scratch[64] = 0;
     if (wpay) {
         fclose(wpay);
         wpay = 0;
@@ -58,6 +58,10 @@ static void ans_flush(void)
 
 static void emit_ans(char ch)
 {
+    if (!saw_first) {
+        saw_first = 1;
+        t_first = clock_elapsed_ms();
+    }
     ui_print_ch(ch);
     if (ans_n < sizeof(ans_buf)) {
         ans_buf[ans_n++] = ch;
@@ -67,9 +71,30 @@ static void emit_ans(char ch)
     }
 }
 
+static void emit_ans_n(const char *p, unsigned n)
+{
+    if (!n) {
+        return;
+    }
+    if (!saw_first) {
+        saw_first = 1;
+        t_first = clock_elapsed_ms();
+    }
+    ui_print_n(p, n);
+    ans_flush();
+    if ((uint16_t)(ans_len + n) < A2CHAT_AUX_POST_MAX) {
+        aux_write(ans_len, (const unsigned char *)p, n);
+        ans_len += n;
+    }
+}
+
 static void on_token(char ch, void *user)
 {
     (void)user;
+    if (wmode == 0 && wm == 0 && ch != '<') {
+        emit_ans(ch);
+        return;
+    }
     if (wmode == 3) {
         if (ch == WEND[wendm]) {
             wendm++;
@@ -96,16 +121,17 @@ static void on_token(char ch, void *user)
         if (wpay) {
             fputc((unsigned char)ch, wpay);
         }
+        emit_ans(ch);
         return;
     }
     if (wmode == 1) {
         if (ch == ' ') {
             wmode = 2;
             wtn = 0;
-            scratch[80] = 0;
+            scratch[64] = 0;
             return;
         }
-        if (wpn + 1 < 80) {
+        if (wpn + 1 < 64) {
             scratch[wpn++] = ch;
             scratch[wpn] = 0;
         }
@@ -117,16 +143,17 @@ static void on_token(char ch, void *user)
             return;
         }
         if (wtn + 1 < 6) {
-            scratch[80 + wtn] = ch;
+            scratch[64 + wtn] = ch;
             wtn++;
-            scratch[80 + wtn] = 0;
+            scratch[64 + wtn] = 0;
         }
         return;
     }
     if (wmode == 5) {
         wmode = 3;
         wendm = 0;
-        wpay = fopen(self_path("A2CHAT.WR"), "wb");
+        /* Do not fopen during TCP: ProDOS on an 8MB volume stalls
+         * Virtual ][ and drops the HTTP stream. */
         return;
     }
     if (ch == WPRE[wm]) {
@@ -151,6 +178,31 @@ static void on_token(char ch, void *user)
         }
     }
     emit_ans(ch);
+}
+
+static void on_span(const char *p, unsigned n, void *user)
+{
+    unsigned i;
+
+    (void)user;
+    if (!n) {
+        return;
+    }
+    if (wmode || wm) {
+        for (i = 0; i < n; i++) {
+            on_token(p[i], 0);
+        }
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        if (p[i] == '<') {
+            for (i = 0; i < n; i++) {
+                on_token(p[i], 0);
+            }
+            return;
+        }
+    }
+    emit_ans_n(p, n);
 }
 
 static uint8_t type_from_arg(const char *t)
@@ -349,7 +401,7 @@ static void save_marked_file(void)
     strncpy(src, self_path("A2CHAT.WR"), sizeof(src) - 1);
     src[sizeof(src) - 1] = 0;
     path_join_prefix(path, scratch);
-    pt = scratch[80] ? type_from_arg(scratch + 80) : type_from_path(path);
+    pt = scratch[64] ? type_from_arg(scratch + 64) : type_from_path(path);
     if (!pt) {
         pt = PRODOS_T_TXT;
     }
@@ -402,17 +454,14 @@ static int has_word(const char *t, const char *w)
 static void save_reply_file(const char *user_text)
 {
     char path[A2CHAT_PATH_MAX];
-    char src[A2CHAT_PATH_MAX];
     FILE *f;
     uint16_t off;
-    int wr;
 
     if (!user_text || !ans_len) {
         return;
     }
     if (!has_word(user_text, ".md") && !has_word(user_text, "save") &&
-        !has_word(user_text, "write") && !has_word(user_text, ".bas") &&
-        !has_word(user_text, "disk")) {
+        !has_word(user_text, ".bas") && !has_word(user_text, "disk")) {
         return;
     }
     if (has_word(user_text, ".bas")) {
@@ -420,11 +469,18 @@ static void save_reply_file(const char *user_text)
     } else {
         memcpy(scratch, "NOTE.MD", 8);
     }
-    strncpy(src, self_path("A2CHAT.WR"), sizeof(src) - 1);
-    src[sizeof(src) - 1] = 0;
-    f = fopen(src, "wb");
+    path_join_prefix(path, scratch);
+    _filetype = has_word(user_text, ".bas") ? PRODOS_T_BAS : PRODOS_T_TXT;
+    _auxtype = has_word(user_text, ".bas") ? 0x0801 : 0;
+    f = fopen(path, "wb");
+    if (!f && g_cfg.prefix[0]) {
+        strncpy(path, scratch, sizeof(path) - 1);
+        path[sizeof(path) - 1] = 0;
+        f = fopen(path, "wb");
+    }
     if (!f) {
-        ui_print("Write failed");
+        ui_print("Write failed ");
+        ui_print(path);
         ui_nl();
         return;
     }
@@ -440,16 +496,6 @@ static void save_reply_file(const char *user_text)
         off += n;
     }
     fclose(f);
-    path_join_prefix(path, scratch);
-    wr = has_word(user_text, ".bas")
-             ? prodos_write_bas(path, src, 0)
-             : prodos_write_file(path, src, PRODOS_T_TXT, 0, 0);
-    if (wr < 0) {
-        ui_print("Write failed ");
-        ui_print(path);
-        ui_nl();
-        return;
-    }
     ui_print("Wrote ");
     ui_print(path);
     ui_nl();
@@ -461,7 +507,13 @@ static int write_body(const char *attach_path)
     FILE *af;
     char abuf[128];
     size_t n;
+#ifndef A2CHAT_HOST
+    uint16_t hsz;
+#endif
 
+#ifndef A2CHAT_HOST
+    hsz = hist_aux_load();
+#endif
     f = fopen(self_path("A2CHAT.BOD"), "wb");
     if (!f) {
         return -1;
@@ -469,21 +521,12 @@ static int write_body(const char *attach_path)
     json_write_prelude(f, g_cfg.model);
     fputs("{\"role\":\"system\",\"content\":\"", f);
     json_escape_fwrite(f, SYS_PROMPT, (unsigned)strlen(SYS_PROMPT));
-    if (g_cfg.prefix[0]) {
-        static const char pfx[] =
-            " Data directory PREFIX=";
-        static const char tail[] =
-            ". Root. <<A2W NAME TYP>>file<<A2E>>. No /VOLUME.";
-        json_escape_fwrite(f, pfx, (unsigned)(sizeof(pfx) - 1));
-        json_escape_fwrite(f, g_cfg.prefix, (unsigned)strlen(g_cfg.prefix));
-        json_escape_fwrite(f, tail, (unsigned)(sizeof(tail) - 1));
-    } else {
-        static const char nopfx[] =
-            " Workspace is the launch folder. Do not invent /VOLUME as the root.";
-        json_escape_fwrite(f, nopfx, (unsigned)(sizeof(nopfx) - 1));
-    }
     fputs("\"}", f);
+#ifndef A2CHAT_HOST
+    hist_aux_to_json(f, hsz);
+#else
     hist_write_messages(f);
+#endif
     if (attach_path && attach_path[0]) {
         fputs(",{\"role\":\"user\",\"content\":\"FILE ", f);
         json_escape_fwrite(f, attach_path, (unsigned)strlen(attach_path));
@@ -514,6 +557,10 @@ int ollama_send(const char *user_text, const char *attach_path)
     int hop;
     const char *att = attach_path;
 
+#ifndef A2CHAT_HOST
+    __asm__("cld");
+#endif
+
     if (!g_net_ok) {
         ui_print("Network not ready");
         ui_nl();
@@ -535,11 +582,11 @@ int ollama_send(const char *user_text, const char *attach_path)
 
     for (hop = 0; hop < MAX_HOPS; hop++) {
         struct jsonscan js;
-        FILE *pay;
         int rc;
 
         jsonscan_init(&js);
         js.on_content = on_token;
+        js.on_span = on_span;
         if (write_body(att) < 0) {
             ui_print("body write failed: ");
             ui_print(self_path("A2CHAT.BOD"));
@@ -549,17 +596,14 @@ int ollama_send(const char *user_text, const char *attach_path)
         att = 0;
         ans_len = 0;
         ans_n = 0;
+        saw_first = 0;
+        t_first = 0;
         wreset();
         js.user = 0;
         ui_status("Talking to Ollama...");
         js.pay = 0;
         rc = http_post_file(addr, g_cfg.port, "/api/chat",
-                            self_path("A2CHAT.BOD"), jsonscan_on_byte, &js);
-        pay = js.pay;
-        if (pay) {
-            fclose(pay);
-            js.pay = 0;
-        }
+                            self_path("A2CHAT.BOD"), jsonscan_on_bytes, &js);
         if (wpay) {
             fclose(wpay);
             wpay = 0;
@@ -573,12 +617,33 @@ int ollama_send(const char *user_text, const char *attach_path)
             return -1;
         }
         ui_nl();
+        {
+            uint32_t dt;
+            unsigned sec;
+            unsigned tok;
+            unsigned tps;
+            char line[40];
+
+            dt = clock_post_ms();
+            sec = (unsigned)(dt / 1000ul);
+            if (sec == 0) {
+                sec = 1;
+            }
+            tok = (unsigned)js.eval_count;
+            tps = tok / sec;
+            sprintf(line, "%us %ut %u/s", sec, tok, tps);
+            ui_set_perf(line);
+            ui_redraw_chrome();
+        }
+        if (!js.eval_count && ans_len) {
+            ui_print("stream cut off");
+            ui_nl();
+        }
         save_marked_file();
         if (!wgot) {
             save_reply_file(user_text);
         }
         hist_append_aux('A', ans_len);
-        ui_redraw_chrome();
         return 0;
     }
     ui_redraw_chrome();

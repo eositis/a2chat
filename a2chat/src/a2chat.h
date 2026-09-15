@@ -6,12 +6,14 @@
 #include <stdio.h>
 #include <stddef.h>
 
-#define A2CHAT_PATH_MAX 64
-#define A2CHAT_LINE_MAX 159
+#define A2CHAT_BUILD 7
+#define A2CHAT_BUILD_STR "7"
+#define A2CHAT_PATH_MAX 48
+#define A2CHAT_LINE_MAX 120
 #define A2CHAT_TOOL_NAME_MAX 16
 #define A2CHAT_DIR_MAX 64
 #define A2CHAT_MODEL_MAX 32
-#define A2CHAT_WIN 40
+#define A2CHAT_WIN 16
 
 struct a2cfg {
     char host[32];
@@ -31,6 +33,7 @@ struct a2cfg {
 struct jsonscan {
     char win[A2CHAT_WIN];
     uint8_t winlen;
+    uint8_t winpos;
     uint8_t mode;
     uint8_t escape;
     uint8_t unicode_n;
@@ -50,10 +53,13 @@ struct jsonscan {
     unsigned arg_offset;
     unsigned arg_length;
     unsigned arg_auxtype;
-    FILE *pay; /* arguments.content / hex streamed here */
+    FILE *pay;
     uint16_t pay_bytes;
     void (*on_content)(char ch, void *user);
+    void (*on_span)(const char *p, unsigned n, void *user);
     void *user;
+    uint16_t eval_count;
+    uint16_t prompt_eval_count;
 };
 
 enum {
@@ -66,14 +72,17 @@ enum {
     JS_ARG_HEX,
     JS_NUM_OFFSET,
     JS_NUM_LENGTH,
-    JS_NUM_AUX
+    JS_NUM_AUX,
+    JS_NUM_EVAL,
+    JS_NUM_PROMPT_EVAL
 };
 
 extern struct a2cfg g_cfg;
 extern uint8_t g_slot;
 extern char g_status[81];
+extern char g_io80[80];
 extern uint8_t g_net_ok;
-extern char g_http_err[48];
+extern char g_http_err[32];
 #ifndef A2CHAT_HOST
 extern char g_cfg_loaded[A2CHAT_PATH_MAX];
 #endif
@@ -90,7 +99,9 @@ void cfg_parse_line(struct a2cfg *c, const char *line);
 /* jsonscan.c */
 void jsonscan_init(struct jsonscan *j);
 void jsonscan_feed(struct jsonscan *j, char ch);
+void jsonscan_feed_buf(struct jsonscan *j, const char *p, unsigned n);
 void jsonscan_on_byte(char ch, void *user);
+void jsonscan_on_bytes(const char *p, unsigned n, void *user);
 void json_escape_fwrite(FILE *f, const char *s, unsigned n);
 unsigned json_escape_len(const char *s, unsigned n);
 
@@ -112,7 +123,9 @@ void ui_init(void);
 void ui_status(const char *msg);
 void ui_print(const char *s);
 void ui_print_ch(char ch);
+void ui_print_n(const char *s, unsigned n);
 void ui_flush(void);
+void ui_set_perf(const char *s);
 void ui_nl(void);
 void ui_prompt(char *buf, uint8_t maxlen);
 int ui_confirm(const char *path, const char *kind, unsigned bytes);
@@ -130,17 +143,35 @@ void net_diag_ollama(void);
 
 int http_post_file(uint32_t addr, uint16_t port, const char *path,
                    const char *body_path,
-                   void (*on_byte)(char ch, void *user), void *user);
+                   void (*on_bytes)(const char *p, unsigned n, void *user),
+                   void *user);
 int http_probe_tags(uint32_t addr, uint16_t port);
 
-/* Aux $4000-$7FFF: 16K POST staging. Routines live in LC. */
-#define A2CHAT_AUX_POST_MAX 0x4000u
+/* Aux $4000-$BFFF: 32K POST + answer staging. Copy routines live in LC. */
+#define A2CHAT_AUX_POST_MAX 0x8000u
 unsigned char aux_present(void);
+#ifndef A2CHAT_HOST
+unsigned char __fastcall__ p8_prefix(char *dst);
+#endif
 void __fastcall__ aux_write(unsigned off, const unsigned char *src, unsigned n);
 void __fastcall__ aux_read(unsigned off, unsigned char *dst, unsigned n);
 
+#define CLOCK_NONE  0
+#define CLOCK_JIFFY 1
+#define CLOCK_NSC   2
+#define CLOCK_MFMS  3
+uint8_t clock_kind(void);
+void clock_init(void);
+void clock_wall(char *dst, unsigned dstsz);
+void clock_reset_ms(void);
+uint32_t clock_elapsed_ms(void);
+uint32_t clock_post_ms(void);
+const char *clock_kind_name(void);
+
 int hist_append(char type, const char *data, uint16_t len);
 int hist_append_aux(char type, uint16_t len);
+uint16_t hist_aux_load(void);
+void hist_aux_to_json(FILE *body, uint16_t n);
 int hist_write_messages(FILE *body);
 void hist_new(void);
 long hist_size(void);

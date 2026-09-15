@@ -42,7 +42,7 @@ The volume contains:
 | `A2CHAT` | The program (BIN at `$0803`) |
 | `A2CHAT.CFG` | Settings (text) |
 
-**If you rebuilt with `make disk`:** that command always copies the *sample* `cfg/A2CHAT.CFG` onto the image. After copying the new `.po` to the Apple, restore your real `HOST`, `MODEL`, `PREFIX`, and static `IP` if you use them.
+**If you rebuilt with `make` / `make disk`:** the image always gets the *sample* `cfg/A2CHAT.CFG`. After copying the new `.po` to the Apple, restore your real `HOST`, `MODEL`, `PREFIX`, and static `IP` if you use them.
 
 Edit `A2CHAT.CFG` with any ProDOS text editor, or from inside A2CHAT with `/config` (host, port, model, slot only — PREFIX and IP are still edited in the file).
 
@@ -110,7 +110,7 @@ Paths you type are turned into **ProDOS leaf names** under `PREFIX`. You cannot 
 
 Type a line that does not start with `/` and press Return. Status shows `Talking to Ollama...` while the reply streams.
 
-Keep prompts reasonably short. The POST is staged in aux RAM (16K). A long `A2CHAT.LOG` (`MAXHIST`) plus a long prompt can fail or time out.
+Keep prompts reasonably short. The POST is staged in aux RAM (32K). A long `A2CHAT.LOG` (`MAXHIST`) plus a long prompt can fail or time out.
 
 There is **no live function-calling** to the disk from the model. Extra tool JSON made the HTTP send miss TCP ACKs on this stack (`send body Timeout`). Chat is plain messages only.
 
@@ -158,6 +158,25 @@ Under `PREFIX` (or the launch directory):
 | `NOTE.MD` / `PROG.BAS` | Default saved replies |
 
 Disk is slow. Short chats should finish in a few seconds; `/read` or `/save` of a large file can take much longer.
+
+## Performance and timing
+
+POST body and the streamed answer use **32K of aux RAM** (`$4000–$BFFF`) so the HTTP send is not chopped into tiny bank switches. Chat POSTs no longer write `A2CHAT.PAY` per token.
+
+After each reply the **top inverse bar** and a chat line show something like:
+
+`TIME 12:04:33 8420ms 142tok 16/s MFMS`
+
+Milliseconds are first-token to stream-end on the IP65 ~ms timer (MegaFlash is not polled during TCP). `tok` is Ollama `eval_count`. Tokens/sec still includes model time; with the IIc accelerator on, Apple-side cost shows up as t/s rising.
+
+| Label | Meaning |
+|-------|---------|
+| `NSC+MFMS` | No-Slot Clock for the `HH:MM:SS` stamp; MegaFlash seen |
+| `MFMS` | MegaFlash present, no NSC |
+| `NSC` | No-Slot Clock only |
+| `JIFFY` | No NSC/MegaFlash; elapsed still uses IP65 `timer_read` |
+
+Boot also prints `Clock MFMS` (or `JIFFY` / `NSC`). If the TIME line is missing, you are not running this build.
 
 ## Troubleshooting
 

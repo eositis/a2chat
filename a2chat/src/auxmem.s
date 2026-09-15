@@ -1,7 +1,8 @@
 ;
 ; Aux-bank block copy for 128K IIe/IIc.
-; RAMRD affects instruction fetch in $0200-$BFFF, so this code lives in LC.
-; 80-col firmware owns aux $0400-$07FF; we use $4000-$7FFF (hires page 2).
+; Writes use RAMWRT from MAIN. Reads run in zp $50: RAMRD switches
+; $0200-$BFFF, so a stub at $0300 fetches opcodes from aux and BRKs.
+; 80-col firmware owns aux $0400-$07FF; POST/answer use $4000-$BFFF.
 ;
         .export         _aux_present
         .export         _aux_write
@@ -10,15 +11,13 @@
         .include        "zeropage.inc"
 
 AUX_BASE        = $4000
-; IIe/IIc: $C002/$C003 = RAMRD (read main/aux), $C004/$C005 = RAMWRT (write main/aux).
 CLR_RAMRD       = $C002
 SET_RAMRD       = $C003
 CLR_RAMWRT      = $C004
 SET_RAMWRT      = $C005
 
-        .segment        "LC"
+        .code
 
-; unsigned char aux_present(void)
 _aux_present:
         php
         sei
@@ -30,12 +29,6 @@ _aux_present:
         sta     CLR_RAMWRT
         lda     $4000
         cmp     tmp1
-        bne     @no              ; main changed: 64K or RAMWRT ignored
-        sta     SET_RAMRD
-        lda     $4000
-        sta     CLR_RAMRD
-        eor     tmp1
-        cmp     #$FF
         bne     @no
         lda     #1
         ldx     #0
@@ -48,7 +41,6 @@ _aux_present:
         plp
         rts
 
-; void __fastcall__ aux_write(unsigned off, const unsigned char *src, unsigned n)
 _aux_write:
         sta     tmp1
         stx     tmp2
@@ -69,7 +61,6 @@ _aux_write:
         plp
 @out:   rts
 
-; void __fastcall__ aux_read(unsigned off, unsigned char *dst, unsigned n)
 _aux_read:
         sta     tmp1
         stx     tmp2
@@ -80,15 +71,21 @@ _aux_read:
         jsr     set_auxptr
         lda     tmp1
         ora     tmp2
-        beq     @out
+        beq     @rdz
+        ldx     #0
+@inst:  lda     stub_img,x
+        sta     $50,x
+        inx
+        cpx     #stub_len
+        bcc     @inst
         php
         sei
-        sta     CLR_RAMWRT
-        sta     SET_RAMRD
-        jsr     copy_from_aux
+        jsr     $50
         sta     CLR_RAMRD
+        sta     CLR_RAMWRT
+        sta     $C054
         plp
-@out:   rts
+@rdz:   rts
 
 set_auxptr:
         clc
@@ -120,23 +117,28 @@ copy_to_aux:
         bne     @pl
 @done:  rts
 
-copy_from_aux:
+        .rodata
+stub_img:
+        sta     CLR_RAMWRT
+        sta     SET_RAMRD
         ldy     #0
         ldx     tmp2
-        beq     @part
-@page:  lda     (ptr2),y
+        beq     rpart
+rpage:  lda     (ptr2),y
         sta     (ptr1),y
         iny
-        bne     @page
+        bne     rpage
         inc     ptr1+1
         inc     ptr2+1
         dex
-        bne     @page
-@part:  lda     tmp1
-        beq     @done
-@pl:    lda     (ptr2),y
+        bne     rpage
+rpart:  lda     tmp1
+        beq     rdone
+rpl:    lda     (ptr2),y
         sta     (ptr1),y
         iny
         cpy     tmp1
-        bne     @pl
-@done:  rts
+        bne     rpl
+rdone:  sta     CLR_RAMRD
+        rts
+stub_len = * - stub_img

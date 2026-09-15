@@ -4,7 +4,7 @@
 #include <stdio.h>
 
 uint8_t g_net_ok;
-char g_http_err[48];
+char g_http_err[32];
 
 int net_init(uint8_t slot)
 {
@@ -57,7 +57,7 @@ void net_diag_ollama(void)
     char line[81];
 
     ui_print(aux_present()
-             ? "Stack    IP65 TCP; POST in aux $4000 (16K)"
+             ? "Stack    IP65 TCP; POST in aux $4000 (32K)"
              : "Stack    IP65 TCP; aux RAM not found");
     ui_nl();
     ui_print("Apple IP ");
