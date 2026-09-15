@@ -46,6 +46,7 @@ $(CUSTOMLIB): src/crt0.s
 A2CHAT.SYSTEM: a2chat.bin
 	cp "$(LOADER)" A2CHAT.SYSTEM
 	cp cfg/A2CHAT.CFG A2CHAT.CFG
+	cp cfg/A2CHAT.TXT A2CHAT.TXT
 
 host-test: tests/test_host
 	./tests/test_host
@@ -57,7 +58,7 @@ disk: a2chat.po
 
 hd: a2chat.hdv
 
-a2chat.hdv: a2chat.bin A2CHAT.SYSTEM cfg/A2CHAT.CFG tools/mkprodos8.py
+a2chat.hdv: a2chat.bin A2CHAT.SYSTEM cfg/A2CHAT.CFG cfg/A2CHAT.TXT tools/mkprodos8.py
 	@test -f "$(AC_JAR)" || (echo "Missing AppleCommander: $(AC_JAR)"; exit 1)
 	@test -f "$(PRODOS_SRC)" || (echo "Missing ProDOS source image: $(PRODOS_SRC)"; exit 1)
 	rm -f $@ /tmp/a2chat-pro140.po
@@ -68,10 +69,11 @@ a2chat.hdv: a2chat.bin A2CHAT.SYSTEM cfg/A2CHAT.CFG tools/mkprodos8.py
 	$(JAVA) -jar "$(AC_JAR)" -as $@ A2CHAT < a2chat.bin
 	$(JAVA) -jar "$(AC_JAR)" -p $@ A2CHAT.SYSTEM SYS < A2CHAT.SYSTEM
 	$(JAVA) -jar "$(AC_JAR)" -ptx $@ A2CHAT.CFG < cfg/A2CHAT.CFG
+	$(JAVA) -jar "$(AC_JAR)" -ptx $@ A2CHAT.TXT < cfg/A2CHAT.TXT
 	$(JAVA) -jar "$(AC_JAR)" -ll $@
 	ls -l $@
 
-a2chat.po: a2chat.bin A2CHAT.SYSTEM cfg/A2CHAT.CFG
+a2chat.po: a2chat.bin A2CHAT.SYSTEM cfg/A2CHAT.CFG cfg/A2CHAT.TXT
 	@test -f "$(AC_JAR)" || (echo "Missing AppleCommander: $(AC_JAR)"; exit 1)
 	@test -f "$(PRODOS_SRC)" || (echo "Missing ProDOS source image: $(PRODOS_SRC)"; exit 1)
 	rm -f $@
@@ -81,9 +83,10 @@ a2chat.po: a2chat.bin A2CHAT.SYSTEM cfg/A2CHAT.CFG
 	$(JAVA) -jar "$(AC_JAR)" -as $@ A2CHAT < a2chat.bin
 	$(JAVA) -jar "$(AC_JAR)" -p $@ A2CHAT.SYSTEM SYS < A2CHAT.SYSTEM
 	$(JAVA) -jar "$(AC_JAR)" -ptx $@ A2CHAT.CFG < cfg/A2CHAT.CFG
+	$(JAVA) -jar "$(AC_JAR)" -ptx $@ A2CHAT.TXT < cfg/A2CHAT.TXT
 	$(JAVA) -jar "$(AC_JAR)" -ll $@
 
 clean:
-	rm -f a2chat.bin a2chat.map A2CHAT.SYSTEM A2CHAT.CFG tests/test_host a2chat.po a2chat.hdv
+	rm -f a2chat.bin a2chat.map A2CHAT.SYSTEM A2CHAT.CFG A2CHAT.TXT tests/test_host a2chat.po a2chat.hdv
 	rm -f src/*.o
 	rm -rf build

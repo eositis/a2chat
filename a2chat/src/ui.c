@@ -130,7 +130,7 @@ void ui_set_perf(const char *s)
 
 static void help_row(void)
 {
-    const char *h = "/config /ping /cat /new /model /read /save /quit /about";
+    const char *h = "/config /ping /cat /new /model /quit /about";
     char t[10];
     unsigned char col;
     unsigned n;

@@ -1,6 +1,9 @@
 #include "a2chat.h"
 #include <string.h>
 #include <stdio.h>
+#ifndef A2CHAT_HOST
+#include <apple2_filetype.h>
+#endif
 
 /* hist uses fopen/MLI: must live in MAIN. LC $Dxxx is unmapped across
  * ProDOS and RTS lands in Applesoft ($D983 dump). */
@@ -21,6 +24,21 @@ static const char *hist_path(void)
 #endif
 
 #define iobuf g_io80
+
+#ifndef A2CHAT_HOST
+/* cc65 fopen("w") defaults to ProDOS BIN. Editors want TXT. */
+static FILE *hist_fopen(const char *mode)
+{
+    _filetype = PRODOS_T_TXT;
+    _auxtype = 0;
+    return fopen(hist_path(), mode);
+}
+
+static void hist_mark_txt(void)
+{
+    p8_set_txt((char *)hist_path());
+}
+#endif
 
 long hist_size(void)
 {
@@ -79,7 +97,7 @@ static int hist_compact(void)
             au += (unsigned)n;
         }
         fclose(in);
-        out = fopen(hist_path(), "wb");
+        out = hist_fopen("wb");
         if (!out) {
             return -1;
         }
@@ -94,6 +112,7 @@ static int hist_compact(void)
             off += chunk;
         }
         fclose(out);
+        hist_mark_txt();
         return 0;
     }
 #else
@@ -175,14 +194,14 @@ static FILE *hist_open_append(void)
 
     f = fopen(hist_path(), "rb");
     if (!f) {
-        return fopen(hist_path(), "wb");
+        return hist_fopen("wb");
     }
     c = fgetc(f);
     fclose(f);
     if (c != '>' && c != EOF) {
-        return fopen(hist_path(), "wb");
+        return hist_fopen("wb");
     }
-    return fopen(hist_path(), "ab");
+    return hist_fopen("ab");
 }
 
 static int hist_put_head(FILE *f, char type)
@@ -221,6 +240,7 @@ int hist_append(char type, const char *data, uint16_t len)
     }
     fputc('\r', f);
     fclose(f);
+    hist_mark_txt();
     hist_maybe_compact();
     return 0;
 #else
@@ -275,6 +295,7 @@ int hist_append_aux(char type, uint16_t len)
     }
     fputc('\r', out);
     fclose(out);
+    hist_mark_txt();
     hist_maybe_compact();
     return 0;
 #else
@@ -302,20 +323,29 @@ void hist_new(void)
 #ifndef A2CHAT_HOST
     __asm__("cld");
 #endif
-    f = fopen(hist_path(), "wb");
+    f = hist_fopen("wb");
     if (f) {
         fclose(f);
+        hist_mark_txt();
     }
 }
 
 #ifndef A2CHAT_HOST
-static int hgetc(FILE *f)
-{
-    int c = fgetc(f);
+#define HIST_RAW_AUX 0x6000u
+#define HIST_RAW_MAX 0x1F00u
 
-    if (c == EOF) {
+static uint16_t hraw_len;
+static uint16_t hraw_pos;
+
+static int hgetc(void)
+{
+    unsigned char c;
+
+    if (hraw_pos >= hraw_len) {
         return EOF;
     }
+    aux_read((unsigned)(HIST_RAW_AUX + hraw_pos), &c, 1);
+    hraw_pos++;
     return c & 0x7f;
 }
 
@@ -326,18 +356,49 @@ static uint16_t emit_role(uint16_t off, int assistant)
     return aux_add_str(off, "\",\"content\":\"");
 }
 
+/* Copy LOG into aux, fclose, then JSON. FILEIO $BA00 is eth_outp. */
 uint16_t hist_emit_json_aux(uint16_t off)
 {
     FILE *f;
     int hold;
     int c;
+    uint16_t start;
+    uint16_t budget;
+    long sz;
+    size_t nread;
 
     __asm__("cld");
+    aux_mainbank();
     f = fopen(hist_path(), "rb");
     if (!f) {
         return off;
     }
+    budget = g_cfg.maxhist ? g_cfg.maxhist : 4096u;
+    if (budget > HIST_RAW_MAX) {
+        budget = HIST_RAW_MAX;
+    }
+    fseek(f, 0, SEEK_END);
+    sz = ftell(f);
+    if (sz > (long)budget) {
+        fseek(f, sz - (long)budget, SEEK_SET);
+    } else {
+        fseek(f, 0, SEEK_SET);
+    }
+    hraw_len = 0;
+    while (hraw_len < budget &&
+           (nread = fread(iobuf, 1, sizeof(iobuf), f)) > 0) {
+        if ((unsigned)hraw_len + (unsigned)nread > budget) {
+            nread = budget - hraw_len;
+        }
+        aux_write((unsigned)(HIST_RAW_AUX + hraw_len),
+                  (const unsigned char *)iobuf, (unsigned)nread);
+        hraw_len = (uint16_t)(hraw_len + nread);
+    }
+    fclose(f);
+    aux_mainbank();
     hold = 0;
+    hraw_pos = 0;
+    start = off;
     for (;;) {
         int ai;
         unsigned n;
@@ -346,7 +407,7 @@ uint16_t hist_emit_json_aux(uint16_t off)
             c = hold;
             hold = 0;
         } else {
-            c = hgetc(f);
+            c = hgetc();
         }
         if (c == EOF) {
             break;
@@ -355,12 +416,12 @@ uint16_t hist_emit_json_aux(uint16_t off)
             continue;
         }
         ai = 0;
-        c = hgetc(f);
+        c = hgetc();
         if (c == 'A') {
             ai = 1;
         }
         while (c != EOF && c != '\r' && c != '\n') {
-            c = hgetc(f);
+            c = hgetc();
         }
         off = emit_role(off, ai);
         n = 0;
@@ -369,12 +430,12 @@ uint16_t hist_emit_json_aux(uint16_t off)
                 off = json_escape_aux(off, iobuf, n);
                 n = 0;
             }
-            c = hgetc(f);
+            c = hgetc();
             if (c == EOF) {
                 break;
             }
             if (c == '\r' || c == '\n') {
-                int n2 = hgetc(f);
+                int n2 = hgetc();
                 if (n2 == '>' || n2 == EOF) {
                     hold = n2;
                     break;
@@ -391,11 +452,14 @@ uint16_t hist_emit_json_aux(uint16_t off)
             off = json_escape_aux(off, iobuf, n);
         }
         off = aux_add_str(off, "\"}");
+        if ((uint16_t)(off - start) >= budget) {
+            break;
+        }
         if (hold == EOF) {
             break;
         }
     }
-    fclose(f);
+    aux_mainbank();
     return off;
 }
 #endif

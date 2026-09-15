@@ -2,9 +2,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
-#include <dirent.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <apple2_filetype.h>
 
 #define iobuf g_io80
@@ -138,7 +135,20 @@ int path_in_workspace(const char *path)
     return path[0] != '/' || path_has_prefix(path, ".");
 }
 
-void path_join_prefix(char *dst, const char *in)
+static void path_strip_slash(char *p)
+{
+    unsigned n;
+
+    if (!p || !p[0]) {
+        return;
+    }
+    n = (unsigned)strlen(p);
+    while (n > 1 && p[n - 1] == '/') {
+        p[--n] = 0;
+    }
+}
+
+static void path_join_ex(char *dst, const char *in, int writing)
 {
     char leaf[16];
     const char *prebase;
@@ -148,6 +158,7 @@ void path_join_prefix(char *dst, const char *in)
         if (g_cfg.prefix[0]) {
             strncpy(dst, g_cfg.prefix, A2CHAT_PATH_MAX - 1);
             dst[A2CHAT_PATH_MAX - 1] = 0;
+            path_strip_slash(dst);
             return;
         }
         dst[0] = '.';
@@ -158,10 +169,18 @@ void path_join_prefix(char *dst, const char *in)
     if (g_cfg.prefix[0]) {
         prebase = basename_path(g_cfg.prefix);
         if (!strcmp(leaf, prebase)) {
-            strcpy(leaf, "NOTE.MD");
+            if (writing) {
+                strcpy(leaf, "NOTE.MD");
+            } else {
+                strncpy(dst, g_cfg.prefix, A2CHAT_PATH_MAX - 1);
+                dst[A2CHAT_PATH_MAX - 1] = 0;
+                path_strip_slash(dst);
+                return;
+            }
         }
         strncpy(dst, g_cfg.prefix, A2CHAT_PATH_MAX - 1);
         dst[A2CHAT_PATH_MAX - 1] = 0;
+        path_strip_slash(dst);
         n = strlen(dst);
         if (n && dst[n - 1] != '/' && n + 1 < A2CHAT_PATH_MAX) {
             dst[n++] = '/';
@@ -174,52 +193,135 @@ void path_join_prefix(char *dst, const char *in)
     dst[A2CHAT_PATH_MAX - 1] = 0;
 }
 
-int prodos_list(const char *path, char *out, unsigned outsz)
+void path_join_prefix(char *dst, const char *in)
 {
-    DIR *d;
-    struct dirent *ent;
-    unsigned used = 0;
-    unsigned count = 0;
-    const char *p = path;
+    path_join_ex(dst, in, 1);
+}
 
-    out[0] = 0;
-    if (!p || !p[0] || (p[0] == '.' && p[1] == 0) ||
-        (g_cfg.prefix[0] && path_has_prefix(p, g_cfg.prefix) &&
-         p[strlen(g_cfg.prefix)] == 0)) {
-        d = opendir(".");
-        if (!d && g_cfg.prefix[0]) {
-            d = opendir((char *)g_cfg.prefix);
-        }
-        if (!d) {
-            p = ".";
-        } else {
-            p = 0;
-        }
-    } else {
-        d = opendir((char *)p);
-    }
-    if (!d) {
-        strncpy(out, "cannot open ", outsz - 1);
-        strncat(out, p ? (char *)p : ".", outsz - strlen(out) - 1);
+void path_join_open(char *dst, const char *in)
+{
+    path_join_ex(dst, in, 0);
+}
+
+#ifndef A2CHAT_HOST
+/* cc65 opendir() mallocs a 512-byte DIR; our heap is the few bytes
+ * between BSS and FILEIO $BA00, so it always fails. Read the directory
+ * file with fopen (uses the 1K FILEIO buffer) and parse entries. */
+static int dir_try(char *path)
+{
+    FILE *f;
+    unsigned pos;
+    unsigned first;
+    unsigned count;
+    unsigned i;
+    unsigned nl;
+    unsigned st;
+
+    path_strip_slash(path);
+    if (!path[0] || (path[0] == '.' && path[1] == 0)) {
         return -1;
     }
-    while ((ent = readdir(d)) != NULL && count < A2CHAT_DIR_MAX) {
-        unsigned n;
-        sprintf(iobuf, "%s %02X %lu\n", ent->d_name, (unsigned)ent->d_type,
-                (unsigned long)ent->d_size);
-        n = (unsigned)strlen(iobuf);
-        if (used + n + 1 >= outsz) {
+    f = fopen(path, "rb");
+    if (!f) {
+        return -1;
+    }
+    pos = 0;
+    first = 1;
+    count = 0;
+    for (;;) {
+        unsigned k = pos & 511u;
+
+        if (k < 4) {
+            if (fread(iobuf, 1, 4 - k, f) != 4 - k) {
+                break;
+            }
+            pos += 4 - k;
+            continue;
+        }
+        if (k == 511) {
+            if (fgetc(f) == EOF) {
+                break;
+            }
+            pos++;
+            continue;
+        }
+        if (fread(iobuf, 1, 39, f) != 39) {
             break;
         }
-        memcpy(out + used, iobuf, n + 1);
-        used += n;
-        count++;
+        pos += 39;
+        st = ((unsigned char)iobuf[0]) >> 4;
+        nl = ((unsigned char)iobuf[0]) & 0x0F;
+        if (first) {
+            first = 0;
+            if (st != 0x0E && st != 0x0F) {
+                fclose(f);
+                return -1;
+            }
+            ui_print(path);
+            ui_nl();
+            continue;
+        }
+        if (!nl || st == 0 || st == 0x0E || st == 0x0F) {
+            continue;
+        }
+        if (nl > 15) {
+            nl = 15;
+        }
+        for (i = 0; i < nl; i++) {
+            iobuf[i] = (char)((unsigned char)iobuf[i + 1] & 0x7f);
+        }
+        iobuf[nl] = 0;
+        ui_print(iobuf);
+        ui_nl();
+        if (++count >= A2CHAT_DIR_MAX) {
+            break;
+        }
     }
-    closedir(d);
-    if (count == A2CHAT_DIR_MAX) {
-        strncat(out, "(truncated)\n", outsz - strlen(out) - 1);
+    fclose(f);
+    if (first) {
+        return -1;
+    }
+    if (!count) {
+        ui_print("(empty)");
+        ui_nl();
     }
     return 0;
+}
+#endif
+
+int prodos_list(const char *path, char *out, unsigned outsz)
+{
+    char try[A2CHAT_PATH_MAX];
+
+    (void)out;
+    (void)outsz;
+#ifndef A2CHAT_HOST
+    if (path && path[0]) {
+        strncpy(try, path, sizeof(try) - 1);
+        try[sizeof(try) - 1] = 0;
+        if (dir_try(try) == 0) {
+            return 0;
+        }
+    }
+    if (g_cfg.prefix[0]) {
+        strncpy(try, g_cfg.prefix, sizeof(try) - 1);
+        try[sizeof(try) - 1] = 0;
+        if (dir_try(try) == 0) {
+            return 0;
+        }
+    }
+    if (p8_prefix(iobuf) && iobuf[0]) {
+        strncpy(try, iobuf, sizeof(try) - 1);
+        try[sizeof(try) - 1] = 0;
+        if (dir_try(try) == 0) {
+            return 0;
+        }
+    }
+#endif
+    ui_print("cannot open ");
+    ui_print(path && path[0] ? (char *)path : ".");
+    ui_nl();
+    return -1;
 }
 
 int prodos_write_file(const char *path, const char *src_path, uint8_t ptype,

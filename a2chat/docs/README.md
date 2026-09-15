@@ -39,13 +39,14 @@ Host-side parser tests (no Apple II required):
 make host-test
 ```
 
-`make disk` rebuilds only the 140K image. `make hd` rebuilds the 8MB image. Both volumes are `/A2CHAT/` with `PRODOS`, `A2CHAT.SYSTEM` (cc65 loader), `A2CHAT` (BIN at `$0803`), and the sample `A2CHAT.CFG`. With no `BASIC.SYSTEM`, ProDOS starts `A2CHAT.SYSTEM` on boot. Restore your real `HOST` / `MODEL` / `PREFIX` after each image rebuild.
+`make disk` rebuilds only the 140K image. `make hd` rebuilds the 8MB image. Both volumes are `/A2CHAT/` with `PRODOS`, `A2CHAT.SYSTEM` (cc65 loader), `A2CHAT` (BIN at `$0803`), sample `A2CHAT.CFG`, and sample `A2CHAT.TXT`. With no `BASIC.SYSTEM`, ProDOS starts `A2CHAT.SYSTEM` on boot. Restore your real `HOST` / `MODEL` / `PREFIX` (and your edited `A2CHAT.TXT`) after each image rebuild.
 
 Manual AppleCommander layout (wget65-style):
 
 - `A2CHAT.SYSTEM` — SYS loader
 - `A2CHAT` — BIN (`-as` AppleSingle from `a2chat.bin`)
 - `A2CHAT.CFG` — TXT
+- `A2CHAT.TXT` — TXT (system prompt)
 
 ## Ollama
 

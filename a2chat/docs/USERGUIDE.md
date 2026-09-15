@@ -2,7 +2,7 @@
 
 A2CHAT is a ProDOS 8 chat client for an enhanced Apple IIe or Apple IIc. It talks HTTP to [Ollama](https://ollama.com) on your LAN, streams the reply in 80-column text, and can save notes or BASIC listings onto a ProDOS volume.
 
-Version **1.1**. The help row shows the binary build on the far right (currently **B13**).
+Version **1.1**. The help row shows the binary build on the far right (currently **B23**).
 
 This guide is for using the program on the Apple. For building from source, see [README.md](README.md). For memory layout and measured timings, see [PERFORMANCE.md](PERFORMANCE.md).
 
@@ -41,10 +41,13 @@ Copy `a2chat.po` (140K) or `a2chat.hdv` (8MB) onto a floppy, SmartPort image, or
 | `A2CHAT.SYSTEM` | cc65 loader (ProDOS starts this if there is no `BASIC.SYSTEM`) |
 | `A2CHAT` | The program (BIN at `$0803`) |
 | `A2CHAT.CFG` | Settings (text) |
+| `A2CHAT.TXT` | Session system prompt (text, editable) |
 
 **If you rebuilt with `make` / `make disk` / `make hd`:** the image always gets the *sample* `cfg/A2CHAT.CFG`. After copying the new image to the Apple, restore your real `HOST`, `MODEL`, `PREFIX`, and static `IP` if you use them.
 
 Edit `A2CHAT.CFG` with any ProDOS text editor, or from inside A2CHAT with `/config` (host, port, model, slot only — PREFIX and IP are still edited in the file).
+
+`A2CHAT.TXT` is the system prompt sent with every chat POST (up to 240 characters). Edit it next to the program, same as CFG. Changes apply on the next message. If the file is missing, A2CHAT uses a short built-in default.
 
 ## First boot
 
@@ -63,7 +66,7 @@ If Ethernet fails, A2CHAT continues **offline**. `/cat`, `/config`, `/about`, `/
 | 0 | Status: host, model, connection; after a reply, `Ns Nt N/s` |
 | 1–20 | Chat (You / AI) |
 | 21–22 | Prompt |
-| 23 | Inverse help: commands on the left; **`HH:MM:SS` and `B13` on the far right** |
+| 23 | Inverse help: commands on the left; **`HH:MM:SS` and `B23` on the far right** |
 
 `P8` is the ProDOS clock, not a second build number. Only the **B** series is shown on the help row.
 
@@ -97,10 +100,8 @@ Use a `PREFIX` on a larger volume when you want notes and logs off the 140K prog
 |---------|------|--------|
 | `/config` | `/c` | Edit host, port, model, slot; save CFG |
 | `/ping` | `/p` | Re-probe Ollama |
-| `/cat` | | List the PREFIX directory (or `.` if PREFIX is empty) |
-| `/cat NAME` | | List or show a path under PREFIX (name is sanitized) |
-| `/read PATH` | `/r` | Read a file and send it to the model as context |
-| `/save PATH` | `/s` | Copy `A2CHAT.LOG` to that name under PREFIX |
+| `/cat` | | List the PREFIX directory (or the launch folder if PREFIX is empty) |
+| `/cat NAME` | | List PREFIX; a leaf name is looked up under PREFIX |
 | `/model NAME` | | Set and save the model; with no name, print the current model |
 | `/new` | | Start a fresh chat (clears the log used as history) |
 | `/about` | `/a` | Clear the chat pane; print version, author, date, and GitHub URL |
@@ -113,7 +114,7 @@ Paths you type are turned into **ProDOS leaf names** under `PREFIX`. You cannot 
 
 Type a line that does not start with `/` and press Return. Status shows `POST /api/chat ...` then streams the reply.
 
-Keep prompts reasonably short. The POST is staged in aux RAM (32K). A long `A2CHAT.LOG` (`MAXHIST`) plus a long prompt can fail or time out.
+Keep prompts reasonably short. The POST is staged in aux RAM (32K). **B21** copies the last `MAXHIST` bytes of `A2CHAT.LOG` into aux and **closes the file before TCP**, so follow-up turns should not need `/new`. `/new` still wipes the log if you want a blank conversation.
 
 There is **no live function-calling** to the disk from the model. Extra tool JSON made the HTTP send miss TCP ACKs (`send body Timeout`). Chat is plain messages only.
 
@@ -154,7 +155,8 @@ Under `PREFIX` (or the launch directory):
 | File | Role |
 |------|------|
 | `A2CHAT.CFG` | Settings (also next to the program if PREFIX is empty) |
-| `A2CHAT.LOG` | Timestamped text history (`>YOU` / `>AI` plus clock). Spliced into later POSTs; `/save` copies it. |
+| `A2CHAT.TXT` | System prompt for the model (next to the program; edit as ProDOS TXT) |
+| `A2CHAT.LOG` | Timestamped text history (`>YOU` / `>AI` plus clock), ProDOS **TXT** so editors can open it. Spliced into later POSTs. |
 | `NOTE.MD` / `PROG.BAS` | Default saved replies |
 
 There is no `A2CHAT.BOD` scratch file. Chat POST JSON lives in aux RAM.

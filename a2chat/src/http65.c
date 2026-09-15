@@ -14,11 +14,12 @@
 #include <ctype.h>
 
 #define TCP_MAX 900
-#define BOUNCE 16
+#define BOUNCE 256
 
-static unsigned char bounce[BOUNCE];
-static char hdr[160];
-static char bod[48];
+static char pkt[256];
+#define hdr pkt
+#define bod (pkt + 200)
+#define bounce ((unsigned char *)pkt)
 
 static uint8_t rx_eof;
 static uint8_t rx_have_hdr;
@@ -322,7 +323,7 @@ int http_post_aux(uint32_t addr, uint16_t port, const char *url_path,
             "Connection: close\r\n"
             "\r\n",
             url_path, g_cfg.host, (unsigned)port, (unsigned)json_len);
-    if (hlen >= sizeof(hdr)) {
+    if (hlen >= 160) {
         strcpy(g_http_err, "headers too long");
         return -1;
     }
@@ -374,7 +375,7 @@ int http_probe_tags(uint32_t addr, uint16_t port)
 
     g_http_err[0] = 0;
     ui_status("TCP connect to Ollama...");
-    rx_reset(0, 0, bod, sizeof(bod));
+    rx_reset(0, 0, bod, 56);
     if (tcp_connect(addr, port, on_tcp)) {
         strcpy(g_http_err, "TCP connect failed");
         return -1;

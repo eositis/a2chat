@@ -5,12 +5,6 @@
 #include <ctype.h>
 #include <ip65.h>
 #include <apple2_filetype.h>
-
-#define MAX_HOPS 8
-
-static const char SYS_PROMPT[] =
-    "Follow the user's request. If they ask for a program, write the program. Do not greet instead of answering.";
-
 static const char WPRE[] = "<<A2W ";
 static const char WEND[] = "<<A2E>>";
 
@@ -24,7 +18,7 @@ static uint8_t wgot;
 static uint8_t wpn;
 static uint8_t wtn;
 static FILE *wpay;
-static char scratch[72];
+#define scratch g_io80
 static uint8_t saw_first;
 static uint32_t t_first;
 
@@ -505,38 +499,93 @@ static int write_body(const char *user_text, const char *attach_path, uint16_t *
 {
     uint16_t off;
     FILE *af;
-    char abuf[128];
+    FILE *pf;
     size_t n;
+    unsigned plen;
+
+    /* Read A2CHAT.TXT with the file closed before any aux JSON or TCP.
+     * FILEIO $BA00 is also eth_outp (NBUFS=1). Do not put a 128-byte
+     * buffer on the C stack: ollama_send already holds jsonscan (~130B)
+     * and the stack is only $100, ending at FILEIO. */
+    plen = 0;
+    aux_mainbank();
+    pf = fopen("A2CHAT.TXT", "rb");
+    if (!pf) {
+        pf = fopen("A2CHAT.TX", "rb");
+    }
+    if (pf) {
+        while (plen < A2CHAT_PROMPT_MAX &&
+               (n = fread(g_io80, 1, sizeof(g_io80), pf)) > 0) {
+            if (plen + (unsigned)n > A2CHAT_PROMPT_MAX) {
+                n = A2CHAT_PROMPT_MAX - plen;
+            }
+            aux_write((unsigned)(A2CHAT_PROMPT_AUX + plen),
+                      (const unsigned char *)g_io80, (unsigned)n);
+            plen += (unsigned)n;
+        }
+        fclose(pf);
+    }
+    aux_mainbank();
 
     off = 0;
     off = aux_add_str(off, "{\"model\":\"");
     off = json_escape_aux(off, g_cfg.model, (unsigned)strlen(g_cfg.model));
     off = aux_add_str(off, "\",\"stream\":true,\"think\":false,\"messages\":[");
     off = aux_add_str(off, "{\"role\":\"system\",\"content\":\"");
-    off = json_escape_aux(off, SYS_PROMPT, (unsigned)strlen(SYS_PROMPT));
-    off = aux_add_str(off, "\"}");
-    off = hist_emit_json_aux(off);
-    if (user_text && user_text[0]) {
-        off = aux_add_str(off, ",{\"role\":\"user\",\"content\":\"");
-        off = json_escape_aux(off, user_text, (unsigned)strlen(user_text));
-        off = aux_add_str(off, "\"}");
-    }
-    if (attach_path && attach_path[0]) {
-        off = aux_add_str(off, ",{\"role\":\"user\",\"content\":\"FILE ");
-        off = json_escape_aux(off, attach_path, (unsigned)strlen(attach_path));
-        off = aux_add_str(off, ":\\n");
-        af = fopen(attach_path, "rb");
-        if (af) {
-            unsigned total = 0;
-            while (total < g_cfg.maxread &&
-                   (n = fread(abuf, 1, sizeof(abuf), af)) > 0) {
-                if (total + n > g_cfg.maxread) {
-                    n = g_cfg.maxread - total;
-                }
-                off = json_escape_aux(off, abuf, (unsigned)n);
-                total += (unsigned)n;
+    if (plen) {
+        unsigned i = 0;
+        while (i < plen) {
+            unsigned c = (unsigned)sizeof(g_io80);
+            if (c > plen - i) {
+                c = plen - i;
             }
-            fclose(af);
+            aux_read((unsigned)(A2CHAT_PROMPT_AUX + i),
+                     (unsigned char *)g_io80, c);
+            aux_mainbank();
+            off = json_escape_aux(off, g_io80, c);
+            i += c;
+        }
+    } else {
+        off = aux_add_str(off, "Follow the user's request.");
+    }
+    off = aux_add_str(off, "\"}");
+    aux_mainbank();
+    if (!attach_path || !attach_path[0]) {
+        off = hist_emit_json_aux(off);
+    }
+    aux_mainbank();
+    if ((user_text && user_text[0]) || (attach_path && attach_path[0])) {
+        off = aux_add_str(off, ",{\"role\":\"user\",\"content\":\"");
+        if (user_text && user_text[0]) {
+            off = json_escape_aux(off, user_text, (unsigned)strlen(user_text));
+        }
+        if (attach_path && attach_path[0]) {
+            af = fopen((char *)attach_path, "rb");
+            if (!af) {
+                return -2;
+            }
+            off = aux_add_str(off, "\\n\\n--- ");
+            off = json_escape_aux(off, attach_path, (unsigned)strlen(attach_path));
+            off = aux_add_str(off, " ---\\n");
+            {
+                unsigned total = 0;
+                uint16_t body0 = off;
+                while (total < g_cfg.maxread &&
+                       (n = fread(g_io80, 1, sizeof(g_io80), af)) > 0) {
+                    if (total + (unsigned)n > g_cfg.maxread) {
+                        n = g_cfg.maxread - total;
+                    }
+                    off = json_escape_aux(off, g_io80, (unsigned)n);
+                    total += (unsigned)n;
+                    if (off >= A2CHAT_AUX_POST_MAX - 8) {
+                        break;
+                    }
+                }
+                fclose(af);
+                if ((unsigned)(off - body0) < 8u) {
+                    return -3;
+                }
+            }
         }
         off = aux_add_str(off, "\"}");
     }
@@ -548,8 +597,9 @@ static int write_body(const char *user_text, const char *attach_path, uint16_t *
 int ollama_send(const char *user_text, const char *attach_path)
 {
     uint32_t addr;
-    int hop;
-    const char *att = attach_path;
+    struct jsonscan js;
+    int rc;
+    uint16_t jlen;
 
 #ifndef A2CHAT_HOST
     __asm__("cld");
@@ -573,76 +623,80 @@ int ollama_send(const char *user_text, const char *attach_path)
     }
     ui_label("AI");
 
-    for (hop = 0; hop < MAX_HOPS; hop++) {
-        struct jsonscan js;
-        int rc;
-        uint16_t jlen;
-
-        jsonscan_init(&js);
-        js.on_content = on_token;
-        js.on_span = on_span;
-        if (write_body(hop ? 0 : user_text, att, &jlen) < 0) {
-            ui_print("POST JSON empty");
-            ui_nl();
-            return -1;
-        }
-        if (hop == 0 && user_text && user_text[0]) {
-            hist_append('U', user_text, (uint16_t)strlen(user_text));
-        }
-        att = 0;
-        ans_len = 0;
-        ans_n = 0;
-        saw_first = 0;
-        t_first = 0;
-        wreset();
-        js.user = 0;
-        ui_status("Talking to Ollama...");
-        js.pay = 0;
-        rc = http_post_aux(addr, g_cfg.port, "/api/chat",
-                           jlen, jsonscan_on_bytes, &js);
-        if (wpay) {
-            fclose(wpay);
-            wpay = 0;
-        }
-        ans_flush();
-        ui_flush();
-        if (rc < 0) {
-            ui_print("\n");
-            ui_print(g_http_err[0] ? g_http_err : "HTTP error");
-            ui_nl();
-            return -1;
-        }
+    jsonscan_init(&js);
+    js.on_content = on_token;
+    js.on_span = on_span;
+    rc = write_body(user_text, attach_path, &jlen);
+    if (rc == -2) {
+        ui_print("cannot open ");
+        ui_print(attach_path);
         ui_nl();
-        {
-            uint32_t dt;
-            unsigned sec;
-            unsigned tok;
-            unsigned tps;
-            char line[40];
-
-            dt = clock_post_ms();
-            sec = (unsigned)(dt / 1000ul);
-            if (sec == 0) {
-                sec = 1;
-            }
-            tok = (unsigned)js.eval_count;
-            tps = tok / sec;
-            sprintf(line, "%us %ut %u/s", sec, tok, tps);
-            ui_set_perf(line);
-            ui_redraw_chrome();
-        }
-        if (!js.eval_count && ans_len) {
-            ui_print("stream cut off");
-            ui_nl();
-        }
-        save_marked_file();
-        if (!wgot) {
-            save_reply_file(user_text);
-        }
-        hist_append_aux('A', ans_len);
-        return 0;
+        return -1;
     }
-    ui_redraw_chrome();
+    if (rc == -3) {
+        ui_print("file empty or not text");
+        ui_nl();
+        return -1;
+    }
+    if (rc < 0) {
+        ui_print("POST JSON empty");
+        ui_nl();
+        return -1;
+    }
+    ans_len = 0;
+    ans_n = 0;
+    saw_first = 0;
+    t_first = 0;
+    wreset();
+    js.user = 0;
+    ui_status("Talking to Ollama...");
+    js.pay = 0;
+    aux_mainbank();
+    rc = http_post_aux(addr, g_cfg.port, "/api/chat",
+                       jlen, jsonscan_on_bytes, &js);
+    if (wpay) {
+        fclose(wpay);
+        wpay = 0;
+    }
+    ans_flush();
+    ui_flush();
+    if (rc < 0) {
+        ui_print("\n");
+        ui_print(g_http_err[0] ? g_http_err : "HTTP error");
+        ui_nl();
+        return -1;
+    }
+    ui_nl();
+    {
+        uint32_t dt;
+        unsigned sec;
+        unsigned tok;
+        unsigned tps;
+        char line[40];
+
+        dt = clock_post_ms();
+        sec = (unsigned)(dt / 1000ul);
+        if (sec == 0) {
+            sec = 1;
+        }
+        tok = (unsigned)js.eval_count;
+        tps = tok / sec;
+        sprintf(line, "%us %ut %u/s", sec, tok, tps);
+        ui_set_perf(line);
+        ui_redraw_chrome();
+    }
+    if (!js.eval_count && ans_len) {
+        ui_print("stream cut off");
+        ui_nl();
+    }
+    save_marked_file();
+    if (!wgot) {
+        save_reply_file(user_text);
+    }
+    if (user_text && user_text[0]) {
+        hist_append('U', user_text, (uint16_t)strlen(user_text));
+    }
+    hist_append_aux('A', ans_len);
     return 0;
 }
 
@@ -731,16 +785,8 @@ int cmd_handle(char *line)
     }
     if (!strcmp(line, "/cat")) {
         char path[A2CHAT_PATH_MAX];
-        path_join_prefix(path, arg[0] ? arg : ".");
-        ui_print(path);
-        ui_nl();
-        if (prodos_list(path, scratch, sizeof(scratch)) < 0) {
-            ui_print(scratch);
-            ui_nl();
-            return 0;
-        }
-        ui_print(scratch[0] ? scratch : "(empty)");
-        ui_nl();
+        path_join_open(path, arg[0] ? arg : ".");
+        prodos_list(path, 0, 0);
         return 0;
     }
     if (!strcmp(line, "/read") || !strcmp(line, "/r")) {
@@ -750,8 +796,18 @@ int cmd_handle(char *line)
             ui_nl();
             return 0;
         }
-        path_join_prefix(path, arg);
-        ollama_send("Read this file and use it as context.", path);
+        path_join_open(path, arg);
+        {
+            FILE *tf = fopen(path, "rb");
+            if (!tf) {
+                ui_print("cannot open ");
+                ui_print(path);
+                ui_nl();
+                return 0;
+            }
+            fclose(tf);
+        }
+        ollama_send("Discuss this file. Do not write a program unless asked.", path);
         return 0;
     }
     if (!strcmp(line, "/save") || !strcmp(line, "/s")) {
@@ -767,7 +823,7 @@ int cmd_handle(char *line)
         ui_nl();
         return 0;
     }
-    ui_print("commands: /config /read /cat /model /ping /new /save /quit /about");
+    ui_print("commands: /config /cat /model /ping /new /quit /about");
     ui_nl();
     return 0;
 }

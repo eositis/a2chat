@@ -6,9 +6,10 @@
 #include <stdio.h>
 #include <stddef.h>
 
-#define A2CHAT_BUILD 13
-#define A2CHAT_BUILD_STR "13"
+#define A2CHAT_BUILD 23
+#define A2CHAT_BUILD_STR "23"
 #define A2CHAT_VERSION "1.1"
+#define A2CHAT_PROMPT_MAX 240
 #define A2CHAT_PATH_MAX 48
 #define A2CHAT_LINE_MAX 120
 #define A2CHAT_TOOL_NAME_MAX 16
@@ -152,9 +153,11 @@ int http_probe_tags(uint32_t addr, uint16_t port);
 
 /* Aux $4000-$BFFF: 32K POST + answer staging. Copy routines live in LC. */
 #define A2CHAT_AUX_POST_MAX 0x8000u
+#define A2CHAT_PROMPT_AUX   0x7F00u
 unsigned char aux_present(void);
 #ifndef A2CHAT_HOST
 unsigned char __fastcall__ p8_prefix(char *dst);
+unsigned char __fastcall__ p8_set_txt(char *path);
 #endif
 void __fastcall__ aux_write(unsigned off, const unsigned char *src, unsigned n);
 void __fastcall__ aux_read(unsigned off, unsigned char *dst, unsigned n);
@@ -192,6 +195,7 @@ int prodos_read_to_aux(const char *path, unsigned offset, unsigned length,
 int path_allowed_write(const char *path);
 int path_in_workspace(const char *path);
 void path_join_prefix(char *dst, const char *in);
+void path_join_open(char *dst, const char *in);
 void prodos_leaf_name(char *dst, const char *in);
 unsigned est_secs_write(unsigned bytes);
 
