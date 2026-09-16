@@ -1,29 +1,30 @@
 # A2CHAT performance and measurement
 
-Status as of **version 1.1 / build B13** (September 2026). Recorded on Virtual ][ (“A2 Desktop w net”), Apple IIe enhanced, 128K, 80-column, Uthernet II slot 4, Ollama `llama3.2:3b` at `192.168.0.111:11434`.
+Status as of **version 1.1 / build 25** (September 2026). B7–B13 bring-up numbers below were recorded on Virtual ][ (“A2 Desktop w net”), Apple IIe enhanced, 128K, 80-column, Uthernet II slot 4, Ollama `llama3.2:3b` at `192.168.0.111:11434`. Build 24 advertised TCP window bytes in the wrong order (`ldax #$0384` → on-wire 0x8403); the peer could send frames larger than `eth_inp` (1024), which the W5100 driver then skipped. That showed up as **`recv timeout`** after a successful connect/send (DHCP/`10.0.2.x` NAT was a red herring). Build 25 uses `ldax #$8403` (900).
 
-The original plan (aux 32K, packet receive, 65C02 content loop, clock + tok/s) is **done**. What follows is how the machine is actually laid out, what shipped, and numbers from real runs — not the planned 16K POST / `A2CHAT.BOD` / NSC-IRQ design.
+The original plan (aux 32K, packet receive, 65C02 content loop, clock + tok/s) is **done**. IP65 work stays **in this tree**: do not edit the GitHub ip65 repo. What follows is layout, what shipped, and B7–B13 runs — not the planned 16K POST / `A2CHAT.BOD` / NSC-IRQ design.
 
 ## Constraints that must not regress
 
 - Language card image at `$D400`, size `$0C00`. Do not put C or Ethernet buffers in LC. This machine cannot store at `$D400` (`LC bank2 map fail`); hist and aux copy live in **main**.
 - Do not use `$D000` (ProDOS LC bank 1).
-- Do not `BIT $C080` / `$C082` while ProDOS must stay mapped. `/quit` must not page ROM over LC.
+- Do not `BIT $C080` / `$C082` while ProDOS must stay mapped. `/quit` must not page ROM over LC. Local `timer_read` must not call Monitor WAIT or those switches (stock IP65 `a2_timer.s` did).
 - No ProDOS `fread` during live TCP. POST JSON is staged in aux `$4000–$BFFF`.
 - No Ollama tools JSON on the live POST (that caused `send body Timeout`).
 - **NBUFS=1**: FILEIO `$BA00` is also `eth_outp`. Only one `fopen` at a time; files closed before `tcp_send`.
 - RAMRD remaps `$0200–$BFFF`. Aux-read stub runs in zero page `$50` and **saves/restores** those bytes around the copy (otherwise `tcp_send` times out). Soft switches are **write-only: `STA`, not `BIT`**.
 - Custom `crt0`: no BLTU2, no `initlib`, `setdos` sets `__dos_type`. `self_path()` is leaf names only.
-- BSS must end below FILEIO (`$BA00`). B13 map: BSS `$AB67–$B966` (`$0E00`), FILEIO `$BA00–$BDFF`, C stack `$BE00–$BF00`.
+- BSS must end below FILEIO (`$BA00`). Build 24 map: BSS `$A980–$B6E4` (`$0D65`), FILEIO `$BA00–$BDFF`, C stack `$BE00–$BF00` (~795 bytes BSS slack).
+- Software TCP only. Do not call `w5100_config()`. TCP window **900** is stored like stock IP65 (`ldax #$8403` → 0x0384 on the wire); `eth_inp` is 1024.
 
-## Memory as it is (B13)
+## Memory as it is (build 24)
 
-Linker (`a2chat.map`): CODE `$086A–$9A68` (~37K), RODATA `$0D01`, DATA `$0322`, BSS `$0E00`. Program file ~42,122 bytes, load `$0803`.
+Linker (`a2chat.map`): CODE `$086A–$9971` (`$9108`), RODATA `$0C5F`, DATA `$0315`, BSS `$0D65`. Program file **41,677** bytes, load `$0803`.
 
 ```text
 Main $0000–$BFFF
   $0803     STARTUP + CODE + RODATA + DATA + INIT
-  $AB67     BSS (IP65 + app), ONCE overlay at start of BSS
+  $A980     BSS (IP65 + app), ONCE overlay at start of BSS
   $BA00     FILEIO 1K = ProDOS iobuf = eth_outp (TX)
   $BE00     cc65 C stack ($0100)
   $BF00     ProDOS HIMEM / global page
@@ -38,6 +39,18 @@ Aux $0000–$BFFF
 ```
 
 Bank switching is **RAMRD/RAMWRT** only. Do not use ALTZP / aux LC.
+
+## IP65 local overrides (build 24)
+
+Linked **before** `ip65_tcp.lib` / `ip65_apple2_uther2.lib` so stock modules are not pulled:
+
+- `ip65_timer.s` — MegaFlash `CMD_GETTIMER_MS` on IIc+MF, else `$C019` VBL (~16 ms/edge). No 33 ms WAIT.
+- `http65.c` — no `ack_window()`; POST bounce is 900 bytes (`TCP_MAX`).
+- `ip65_icmp.s` — drop ICMP (no echo-reply over FILEIO).
+- `ip65_error.s` / `ip65_outbuf.s` — short strerror; DHCP scratch 300 bytes.
+- Patched copy of IP65 `tcp.s` (window 900 as `ldax #$8403`) via `tools/patch_ip65_tcp.py`; `ethernet_a2chat.s` + `eth_buffer.s` `eth_inp` 1024.
+
+`make host-test` still passes. DHCP / static IP / long POST / stream should be checked on Uthernet (emulator or hardware). Watch `Timeout` (timer) and truncated RX (window vs buffer).
 
 ## What the plan asked for vs what shipped
 
@@ -56,7 +69,7 @@ Clock-card IRQs (NSC) **SED** and smash zero page; they are unsafe with this LC 
 
 1. **P8** — peek ProDOS `$BF92`/`$BF93` (hour/minute). Help row and `A2CHAT.LOG` stamps. Label `P8` (not a build number).
 2. **MFMS** — MegaFlash Pico ms timer + time string if present (`mfclock.s`, IIc ID `$FBB3=6`).
-3. **JIFFY** — IP65 `timer_read()` (~60 Hz) for elapsed only.
+3. **JIFFY** — local `timer_read()` (VBL ~16 ms, or MegaFlash ms). Stock IP65 WAIT is not used.
 
 Elapsed for tok/s: MegaFlash `mf_get_ms()` when present, else jiffy delta. Reset at last successful POST `tcp_send` (`t_post`). First content byte is `t_first`. Bar after a reply looks like `3s 16t 5/s` (seconds, Ollama `eval_count`, tokens/sec). Help row shows `HH:MM:SS` and **B13** on the far right (P8 is not shown there).
 
@@ -102,8 +115,8 @@ There is no separate “three identical baseline prompts with accelerator on/off
 
 ## Out of scope (still)
 
-- Moving LC back to `$D000` or storing C/eth in LC on this machine
+- Moving LC back to `$D000` or storing C or Ethernet buffers in LC on this machine
 - Re-enabling Ollama tools JSON on the live POST
 - ALTZP / aux LC overlays
-- Rewriting IP65 or switching to W5100 on-chip TCP (`w5100_config()`)
+- Editing the IP65 git repo, or switching to W5100 on-chip TCP (`w5100_config()`)
 - NSC IRQ as the elapsed-time clock

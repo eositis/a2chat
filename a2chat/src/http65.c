@@ -14,9 +14,9 @@
 #include <ctype.h>
 
 #define TCP_MAX 900
-#define BOUNCE 256
+#define BOUNCE 900
 
-static char pkt[256];
+static char pkt[900];
 #define hdr pkt
 #define bod (pkt + 200)
 #define bounce ((unsigned char *)pkt)
@@ -195,22 +195,6 @@ static void send_fail(const char *what)
     }
 }
 
-static void ack_window(void)
-{
-    /* IP65 tcp_send only waits until timer_read()'s high byte changes.
-     * On Apple II that can be ~33ms if the low byte is about to wrap, which
-     * is shorter than a delayed ACK. Tick over first so the wait is ~256ms. */
-    unsigned char hi = (unsigned char)(timer_read() >> 8);
-    uint8_t n = 12;
-
-    while (n) {
-        n--;
-        if ((unsigned char)(timer_read() >> 8) != hi) {
-            break;
-        }
-    }
-}
-
 static int send_all(const uint8_t *p, uint16_t len)
 {
     /* tcp_send already waits for ACK and closes on failure; do not retry. */
@@ -219,7 +203,6 @@ static int send_all(const uint8_t *p, uint16_t len)
         if (ui_aborted()) {
             return -1;
         }
-        ack_window();
         if (tcp_send(p, n)) {
             return -1;
         }
@@ -245,7 +228,6 @@ static int send_aux(uint16_t off, uint16_t total)
         if (ui_aborted()) {
             return -1;
         }
-        ack_window();
         if (tcp_send(bounce, n)) {
             return -1;
         }

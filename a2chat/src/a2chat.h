@@ -6,8 +6,8 @@
 #include <stdio.h>
 #include <stddef.h>
 
-#define A2CHAT_BUILD 23
-#define A2CHAT_BUILD_STR "23"
+#define A2CHAT_BUILD 25
+#define A2CHAT_BUILD_STR "25"
 #define A2CHAT_VERSION "1.1"
 #define A2CHAT_PROMPT_MAX 240
 #define A2CHAT_PATH_MAX 48

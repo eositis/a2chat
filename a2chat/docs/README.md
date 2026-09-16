@@ -2,7 +2,7 @@
 
 Native **ProDOS 8** chat client for an enhanced **Apple IIe** or **Apple IIc** with **Uthernet II** (WIZnet W5100). It talks **HTTP directly** to [Ollama](https://ollama.com) on the LAN, streams replies in 80-column text, and can save notes or listings onto a ProDOS volume.
 
-Current release: **version 1.1** (help row **B13**).
+Current release: **version 1.1** (help row **25**).
 
 **Using it on the Apple:** [USERGUIDE.md](USERGUIDE.md) (hardware, disk install, config, commands, saving files, troubleshooting).
 
@@ -31,7 +31,7 @@ cd a2chat
 make
 ```
 
-That builds IP65’s `ip65_tcp.lib` + `ip65_apple2_uther2.lib` if needed, then `a2chat.bin`, copies cc65 `loader.system` to `A2CHAT.SYSTEM`, and writes **`a2chat.po`** (140K) and **`a2chat.hdv`** (8MB). HTTP uses the same software TCP path as telnet65 (`tcp_connect` / `ip65_process`), not wget65’s W5100 on-chip TCP.
+That builds IP65’s `ip65_tcp.lib` + `ip65_apple2_uther2.lib` if needed, then `a2chat.bin`, copies cc65 `loader.system` to `A2CHAT.SYSTEM`, and writes **`a2chat.po`** (140K) and **`a2chat.hdv`** (8MB). HTTP uses the same software TCP path as telnet65 (`tcp_connect` / `ip65_process`), not wget65’s W5100 on-chip TCP. Timer, ICMP, TX/RX buffers, and TCP window 900 are **A2CHAT objects** linked ahead of those libs; the IP65 tree is not patched.
 
 Host-side parser tests (no Apple II required):
 

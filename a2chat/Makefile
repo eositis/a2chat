@@ -26,6 +26,23 @@ SRCS = \
 	src/ollama.c \
 	src/clock.c
 
+ASM = \
+	src/iobuf_bss.s \
+	src/auxmem.s \
+	src/p8clock.s \
+	src/mfclock.s \
+	src/eth_buffer.s
+
+IP65OVR = \
+	build/tcp.o \
+	build/ip65_timer.o \
+	build/ip65_icmp.o \
+	build/ip65_error.o \
+	build/ip65_outbuf.o \
+	build/ethernet_a2chat.o
+
+CA65IP = ca65 -t apple2enh -I$(IP65)/inc
+
 .PHONY: all ip65 host-test disk hd clean
 
 all: ip65 a2chat.bin A2CHAT.SYSTEM disk hd
@@ -34,8 +51,34 @@ ip65:
 	$(MAKE) -C $(IP65)/ip65 ip65_tcp.lib
 	$(MAKE) -C $(IP65)/drivers ip65_apple2_uther2.lib
 
-a2chat.bin: $(SRCS) src/a2chat.h src/iobuf_bss.s src/auxmem.s src/p8clock.s src/mfclock.s src/eth_buffer.s cfg/apple2enh-a2chat.cfg $(CUSTOMLIB)
-	$(CC65) -o $@ $(CFLAGS) --no-target-lib -m a2chat.map build/crt0.o $(SRCS) src/iobuf_bss.s src/auxmem.s src/p8clock.s src/mfclock.s src/eth_buffer.s $(IP65LIB) $(A2DRV) $(CUSTOMLIB)
+build/tcp.o: $(IP65)/ip65/tcp.s tools/patch_ip65_tcp.py
+	mkdir -p build/ip65-src
+	ln -sfn "$(IP65)/inc" build/inc
+	python3 tools/patch_ip65_tcp.py "$(IP65)/ip65/tcp.s" build/ip65-src/tcp.s
+	ca65 -DTCP -t apple2enh -o $@ build/ip65-src/tcp.s
+
+build/ip65_timer.o: src/ip65_timer.s
+	mkdir -p build
+	$(CA65IP) -o $@ $<
+
+build/ip65_icmp.o: src/ip65_icmp.s
+	mkdir -p build
+	$(CA65IP) -o $@ $<
+
+build/ip65_error.o: src/ip65_error.s
+	mkdir -p build
+	$(CA65IP) -o $@ $<
+
+build/ip65_outbuf.o: src/ip65_outbuf.s
+	mkdir -p build
+	$(CA65IP) -o $@ $<
+
+build/ethernet_a2chat.o: src/ethernet_a2chat.s
+	mkdir -p build
+	$(CA65IP) -o $@ $<
+
+a2chat.bin: $(SRCS) src/a2chat.h $(ASM) $(IP65OVR) cfg/apple2enh-a2chat.cfg $(CUSTOMLIB)
+	$(CC65) -o $@ $(CFLAGS) --no-target-lib -m a2chat.map build/crt0.o $(IP65OVR) $(SRCS) $(ASM) $(IP65LIB) $(A2DRV) $(CUSTOMLIB)
 
 $(CUSTOMLIB): src/crt0.s
 	mkdir -p build
