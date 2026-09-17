@@ -106,6 +106,26 @@ void cfg_parse_line(struct a2cfg *c, const char *line)
     }
 }
 
+int cfg_is_olla(const struct a2cfg *c)
+{
+    return c != 0 && c->port == (uint16_t)A2CHAT_OLLA_PORT;
+}
+
+const char *cfg_api_path(const struct a2cfg *c, const char *suffix)
+{
+    static char path[40];
+
+    if (!suffix) {
+        suffix = "/api/chat";
+    }
+    if (cfg_is_olla(c)) {
+        strcpy(path, "/olla/ollama");
+        strcat(path, suffix);
+        return path;
+    }
+    return suffix;
+}
+
 static FILE *cfg_open(const char *path)
 {
     FILE *f;

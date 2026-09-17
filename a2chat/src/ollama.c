@@ -649,10 +649,10 @@ int ollama_send(const char *user_text, const char *attach_path)
     t_first = 0;
     wreset();
     js.user = 0;
-    ui_status("Talking to Ollama...");
+    ui_status("Talking...");
     js.pay = 0;
     aux_mainbank();
-    rc = http_post_aux(addr, g_cfg.port, "/api/chat",
+    rc = http_post_aux(addr, g_cfg.port, cfg_api_path(&g_cfg, "/api/chat"),
                        jlen, jsonscan_on_bytes, &js);
     if (wpay) {
         fclose(wpay);

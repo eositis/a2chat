@@ -320,7 +320,7 @@ int http_post_aux(uint32_t addr, uint16_t port, const char *url_path,
                 send_fail("TCP connect");
                 return -1;
             }
-            ui_status("POST /api/chat ...");
+            ui_status(url_path);
             if (send_str(hdr) != 0) {
                 tcp_close();
                 if (tries == 2) {
@@ -363,12 +363,12 @@ int http_probe_tags(uint32_t addr, uint16_t port)
         return -1;
     }
     sprintf(hdr,
-            "GET /api/tags HTTP/1.0\r\n"
+            "GET %s HTTP/1.0\r\n"
             "Host: %s:%u\r\n"
             "Connection: close\r\n"
             "\r\n",
-            g_cfg.host, (unsigned)port);
-    ui_status("GET /api/tags ...");
+            cfg_api_path(&g_cfg, "/api/tags"), g_cfg.host, (unsigned)port);
+    ui_status(cfg_api_path(&g_cfg, "/api/tags"));
     if (send_str(hdr) < 0) {
         tcp_close();
         strcpy(g_http_err, "TCP up, send failed");

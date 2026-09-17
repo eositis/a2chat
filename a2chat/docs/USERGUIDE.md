@@ -2,7 +2,7 @@
 
 A2CHAT is a ProDOS 8 chat client for an enhanced Apple IIe or Apple IIc. It talks HTTP to [Ollama](https://ollama.com) on your LAN, streams the reply in 80-column text, and can save notes or BASIC listings onto a ProDOS volume.
 
-Version **1.1**. The help row shows the binary build on the far right (currently **B23**).
+Version **1.1**. The help row shows the binary build on the far right (currently **26**).
 
 This guide is for using the program on the Apple. For building from source, see [README.md](README.md). For memory layout and measured timings, see [PERFORMANCE.md](PERFORMANCE.md).
 
@@ -30,6 +30,8 @@ export OLLAMA_HOST=0.0.0.0:11434
 ```
 
 Then restart Ollama and pull a model, for example `ollama pull llama3.2:3b`.
+
+To go through [Olla](https://thushan.github.io/olla/) instead, run Olla on the LAN (`0.0.0.0:40114`) and set `PORT=40114`. A2CHAT then POSTs `/olla/ollama/api/chat` and GETs `/olla/ollama/api/tags` (Ollama JSON, not OpenAI `/olla/ollama/v1`).
 
 ## Install the disk
 
@@ -81,7 +83,7 @@ Lines are `KEY=value`. Unknown keys are ignored.
 | Key | Meaning |
 |-----|---------|
 | `HOST` | Ollama IPv4 (required) |
-| `PORT` | Usually `11434` |
+| `PORT` | `11434` for Ollama, or `40114` for Olla |
 | `MODEL` | Exact Ollama tag |
 | `SLOT` | `0` = auto; `4` typical MegaFlash IIc; `3` typical IIe |
 | `IP` / `GATEWAY` / `NETMASK` | Empty = DHCP. Fill all three for a static Apple address (recommended on some emulators). |
@@ -112,7 +114,7 @@ Paths you type are turned into **ProDOS leaf names** under `PREFIX`. You cannot 
 
 ## Chatting
 
-Type a line that does not start with `/` and press Return. Status shows `POST /api/chat ...` then streams the reply.
+Type a line that does not start with `/` and press Return. Status shows `POST /api/chat` (or `/olla/ollama/api/chat` on port 40114) then streams the reply.
 
 Keep prompts reasonably short. The POST is staged in aux RAM (32K). **B21** copies the last `MAXHIST` bytes of `A2CHAT.LOG` into aux and **closes the file before TCP**, so follow-up turns should not need `/new`. `/new` still wipes the log if you want a blank conversation.
 
@@ -175,7 +177,7 @@ Numbers from the B7–B13 bring-up (same LAN, `llama3.2:3b`) are in [PERFORMANCE
 
 | Symptom | What to try |
 |---------|-------------|
-| `Probe FAIL` | Ollama not on `0.0.0.0:11434`; firewall; Apple and host not on the same subnet; `HOST=` is a name instead of IPv4 |
+| `Probe FAIL` | Ollama not on `0.0.0.0:11434`, or Olla not on `:40114`; firewall; Apple and host not on the same subnet; `HOST=` is a name instead of IPv4 |
 | `----` in the status bar | Ethernet init failed — slot, DHCP, or Uthernet II not seen |
 | `Pull the model or fix MODEL=` | `ollama list` on the host; set `MODEL=` to an exact tag |
 | `send body Timeout` / `send aux Timeout` | Shorter prompt and `/new` to shrink history; do not ask the model to call tools |

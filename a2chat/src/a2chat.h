@@ -6,9 +6,10 @@
 #include <stdio.h>
 #include <stddef.h>
 
-#define A2CHAT_BUILD 25
-#define A2CHAT_BUILD_STR "25"
+#define A2CHAT_BUILD 26
+#define A2CHAT_BUILD_STR "26"
 #define A2CHAT_VERSION "1.1"
+#define A2CHAT_OLLA_PORT 40114u
 #define A2CHAT_PROMPT_MAX 240
 #define A2CHAT_PATH_MAX 48
 #define A2CHAT_LINE_MAX 120
@@ -97,6 +98,8 @@ int cfg_load_first(struct a2cfg *c);
 #endif
 int cfg_save(const struct a2cfg *c, const char *path);
 void cfg_parse_line(struct a2cfg *c, const char *line);
+int cfg_is_olla(const struct a2cfg *c);
+const char *cfg_api_path(const struct a2cfg *c, const char *suffix);
 
 /* jsonscan.c */
 void jsonscan_init(struct jsonscan *j);

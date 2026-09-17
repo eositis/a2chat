@@ -2,7 +2,7 @@
 
 Native **ProDOS 8** chat client for an enhanced **Apple IIe** or **Apple IIc** with **Uthernet II** (WIZnet W5100). It talks **HTTP directly** to [Ollama](https://ollama.com) on the LAN, streams replies in 80-column text, and can save notes or listings onto a ProDOS volume.
 
-Current release: **version 1.1** (help row **25**).
+Current release: **version 1.1** (help row **26**).
 
 **Using it on the Apple:** [USERGUIDE.md](USERGUIDE.md) (hardware, disk install, config, commands, saving files, troubleshooting).
 
@@ -58,12 +58,24 @@ export OLLAMA_HOST=0.0.0.0:11434
 
 then restart Ollama. `HOST=` in `A2CHAT.CFG` is the Mac/PC **dotted IPv4** (v1 has no DNS unless AppleWin’s virtual W5100 DNS offload is present). Pull a model, e.g. `ollama pull llama3.2:3b`.
 
+## Olla (`PORT=40114`)
+
+[Olla](https://thushan.github.io/olla/) proxies Ollama (default listen **40114**). A2CHAT stays on the **native Ollama** JSON it already streams, under Olla’s prefix:
+
+| | Direct Ollama | Through Olla |
+|--|--|--|
+| Port | `11434` | `40114` |
+| Chat | `POST /api/chat` | `POST /olla/ollama/api/chat` |
+| Tags | `GET /api/tags` | `GET /olla/ollama/api/tags` |
+
+Set `PORT=40114` (or `/config`) and keep `HOST=` as the machine running Olla. OpenAI-compatible `/olla/ollama/v1` is **not** used; that path expects a different request body than A2CHAT builds. Bind Olla on the LAN (`0.0.0.0:40114`), not only localhost.
+
 ## Config (`A2CHAT.CFG`)
 
 | Key | Meaning |
 |-----|---------|
 | `HOST` | Ollama IPv4 |
-| `PORT` | default 11434 |
+| `PORT` | `11434` Ollama, or `40114` Olla (`/olla/ollama/api/...`) |
 | `MODEL` | model name |
 | `SLOT` | `0` = auto; `4` MegaFlash IIc; `3` typical IIe |
 | `IP` / `GATEWAY` / `NETMASK` | empty = DHCP (IP65); filled = static |

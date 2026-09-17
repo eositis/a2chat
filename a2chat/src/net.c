@@ -73,8 +73,13 @@ void net_diag_ollama(void)
         ui_nl();
         return;
     }
-    sprintf(line, "Ollama   %s:%u", g_cfg.host, (unsigned)g_cfg.port);
+    sprintf(line, "%s   %s:%u",
+            cfg_is_olla(&g_cfg) ? "Olla" : "Ollama",
+            g_cfg.host, (unsigned)g_cfg.port);
     ui_print(line);
+    ui_nl();
+    ui_print("API      ");
+    ui_print(cfg_api_path(&g_cfg, "/api/chat"));
     ui_nl();
     ui_print("Target   ");
     ui_print(dotted_quad(addr));
@@ -90,7 +95,9 @@ void net_diag_ollama(void)
         ui_print("Probe FAIL: ");
         ui_print(g_http_err[0] ? g_http_err : "unknown");
         ui_nl();
-        ui_print("Check OLLAMA_HOST=0.0.0.0:11434 and same LAN/subnet.");
+        ui_print(cfg_is_olla(&g_cfg)
+                 ? "Check Olla :40114/olla/ollama/api and same LAN."
+                 : "Check OLLAMA_HOST=0.0.0.0:11434 and same LAN/subnet.");
         ui_nl();
         return;
     }

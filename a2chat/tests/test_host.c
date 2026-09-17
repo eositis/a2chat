@@ -80,6 +80,18 @@ int main(void)
         fprintf(stderr, "config case fail\n");
         return 1;
     }
+    cfg_parse_line(&c, "PORT=40114");
+    if (!cfg_is_olla(&c) ||
+        strcmp(cfg_api_path(&c, "/api/chat"), "/olla/ollama/api/chat") ||
+        strcmp(cfg_api_path(&c, "/api/tags"), "/olla/ollama/api/tags")) {
+        fprintf(stderr, "olla path fail '%s'\n", cfg_api_path(&c, "/api/chat"));
+        return 1;
+    }
+    cfg_parse_line(&c, "PORT=11434");
+    if (cfg_is_olla(&c) || strcmp(cfg_api_path(&c, "/api/chat"), "/api/chat")) {
+        fprintf(stderr, "ollama path fail\n");
+        return 1;
+    }
     {
         FILE *cf = fopen("fixtures/cr.cfg", "wb");
         assert(cf);
