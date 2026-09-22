@@ -616,11 +616,6 @@ int ollama_send(const char *user_text, const char *attach_path)
         ui_nl();
         return -1;
     }
-    if (user_text && user_text[0]) {
-        ui_label("You");
-        ui_print(user_text);
-        ui_nl();
-    }
     ui_label("AI");
 
     jsonscan_init(&js);

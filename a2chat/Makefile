@@ -31,7 +31,8 @@ ASM = \
 	src/auxmem.s \
 	src/p8clock.s \
 	src/mfclock.s \
-	src/eth_buffer.s
+	src/eth_buffer.s \
+	src/chatmem.s
 
 IP65OVR = \
 	build/tcp.o \

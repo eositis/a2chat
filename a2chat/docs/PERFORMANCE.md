@@ -35,6 +35,7 @@ Language card
 
 Aux $0000–$BFFF
   $0400–$07FF   80-column text
+  $0800–$2FFF   128-line scrollback (80-col rows)
   $4000–$BFFF   32K POST JSON + streamed answer  (A2CHAT_AUX_POST_MAX = $8000)
 ```
 
@@ -45,7 +46,7 @@ Bank switching is **RAMRD/RAMWRT** only. Do not use ALTZP / aux LC.
 Linked **before** `ip65_tcp.lib` / `ip65_apple2_uther2.lib` so stock modules are not pulled:
 
 - `ip65_timer.s` — MegaFlash `CMD_GETTIMER_MS` on IIc+MF, else `$C019` VBL (~16 ms/edge). No 33 ms WAIT.
-- `http65.c` — no `ack_window()`; POST bounce is 900 bytes (`TCP_MAX`).
+- `http65.c` — no `ack_window()`; POST bounce is 256 bytes (900-byte bounce did not fit BSS after the scrolling UI).
 - `ip65_icmp.s` — drop ICMP (no echo-reply over FILEIO).
 - `ip65_error.s` / `ip65_outbuf.s` — short strerror; DHCP scratch 300 bytes.
 - Patched copy of IP65 `tcp.s` (window 900 as `ldax #$8403`) via `tools/patch_ip65_tcp.py`; `ethernet_a2chat.s` + `eth_buffer.s` `eth_inp` 1024.

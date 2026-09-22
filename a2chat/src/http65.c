@@ -14,9 +14,9 @@
 #include <ctype.h>
 
 #define TCP_MAX 900
-#define BOUNCE 900
+#define BOUNCE 256
 
-static char pkt[900];
+static char pkt[256];
 #define hdr pkt
 #define bod (pkt + 200)
 #define bounce ((unsigned char *)pkt)

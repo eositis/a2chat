@@ -6,8 +6,8 @@
 #include <stdio.h>
 #include <stddef.h>
 
-#define A2CHAT_BUILD 26
-#define A2CHAT_BUILD_STR "26"
+#define A2CHAT_BUILD 29
+#define A2CHAT_BUILD_STR "29"
 #define A2CHAT_VERSION "1.1"
 #define A2CHAT_OLLA_PORT 40114u
 #define A2CHAT_PROMPT_MAX 240
@@ -164,6 +164,8 @@ unsigned char __fastcall__ p8_set_txt(char *path);
 #endif
 void __fastcall__ aux_write(unsigned off, const unsigned char *src, unsigned n);
 void __fastcall__ aux_read(unsigned off, unsigned char *dst, unsigned n);
+void __fastcall__ aux_abs_write(unsigned addr, const unsigned char *src, unsigned n);
+void __fastcall__ aux_abs_read(unsigned addr, unsigned char *dst, unsigned n);
 void aux_mainbank(void);
 void prodos_quit(void);
 

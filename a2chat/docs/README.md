@@ -2,7 +2,7 @@
 
 Native **ProDOS 8** chat client for an enhanced **Apple IIe** or **Apple IIc** with **Uthernet II** (WIZnet W5100). It talks **HTTP directly** to [Ollama](https://ollama.com) on the LAN, streams replies in 80-column text, and can save notes or listings onto a ProDOS volume.
 
-Current release: **version 1.1** (help row **26**).
+Current release: **version 1.1** (help row **29**).
 
 **Using it on the Apple:** [USERGUIDE.md](USERGUIDE.md) (hardware, disk install, config, commands, saving files, troubleshooting).
 

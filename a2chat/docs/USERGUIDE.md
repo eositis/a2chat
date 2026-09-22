@@ -2,7 +2,7 @@
 
 A2CHAT is a ProDOS 8 chat client for an enhanced Apple IIe or Apple IIc. It talks HTTP to [Ollama](https://ollama.com) on your LAN, streams the reply in 80-column text, and can save notes or BASIC listings onto a ProDOS volume.
 
-Version **1.1**. The help row shows the binary build on the far right (currently **26**).
+Version **1.1**. The help row shows the binary build on the far right (currently **29**).
 
 This guide is for using the program on the Apple. For building from source, see [README.md](README.md). For memory layout and measured timings, see [PERFORMANCE.md](PERFORMANCE.md).
 
@@ -66,13 +66,12 @@ If Ethernet fails, A2CHAT continues **offline**. `/cat`, `/config`, `/about`, `/
 | Rows | What |
 |------|------|
 | 0 | Status: host, model, connection; after a reply, `Ns Nt N/s` |
-| 1–20 | Chat (You / AI) |
-| 21–22 | Prompt |
-| 23 | Inverse help: commands on the left; **`HH:MM:SS` and `B23` on the far right** |
+| 1–22 | Scrolling transcript (`You` / `AI`); type on the `You` line |
+| 23 | Inverse help: commands on the left; **`HH:MM:SS` and `B29` on the far right** |
 
 `P8` is the ProDOS clock, not a second build number. Only the **B** series is shown on the help row.
 
-The first non-slash prompt, and `/new`, clear the chat pane. History stays in `A2CHAT.LOG` until you `/new`.
+Type after the inverse `You` label. After Return, the next line is the `AI` reply. When the pane fills, text **scrolls up**; it does not wrap back to the top. About 128 lines (~6 screens) stay in aux RAM (`$0800`). Open-Apple + up/down (or the arrow keys) pages through that scrollback while idle; any typed character returns to the live prompt. `/new` clears the pane and the RAM ring. History in `A2CHAT.LOG` is unchanged.
 
 Open-Apple + `.` (or the IP65 abort key) can interrupt a transfer.
 

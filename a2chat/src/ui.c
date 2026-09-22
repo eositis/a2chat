@@ -9,9 +9,12 @@
 
 #define CHROME_TOP 0
 #define CHAT_TOP 1
-#define CHAT_BOT 20
-#define INPUT_ROW 21
+#define CHAT_BOT 22
 #define HELP_ROW 23
+#define PANE 22
+
+#define SB_LINES 128
+#define SB_ADDR 0x0800u
 
 #define STORE80_ON  (*(volatile unsigned char *)0xC001)
 #define PAGE2_OFF   (*(volatile unsigned char *)0xC054)
@@ -22,12 +25,19 @@ static uint8_t chat_x = 0;
 static char outbuf[16];
 static uint8_t outn;
 static uint8_t have_perf;
+static uint8_t sb_head;
+static uint8_t sb_count;
+static uint8_t sb_view;
 
 uint8_t g_slot;
 char g_status[81];
 char g_io80[80];
 
 void ui_clear_chat(void);
+
+void __fastcall__ chat_copy_row(uint8_t dst, uint8_t src);
+void __fastcall__ chat_pack_row(uint8_t row, unsigned char *dst);
+void __fastcall__ chat_unpack_row(uint8_t row, const unsigned char *src);
 
 static unsigned text_base(uint8_t row)
 {
@@ -115,6 +125,144 @@ static void chat_clear_line(uint8_t row)
         *(volatile unsigned char *)(addr + i) = 0xA0;
     }
     PAGE2_OFF = 0;
+}
+
+static void chat_copy_row_up(void)
+{
+    uint8_t r;
+
+    for (r = CHAT_TOP; r < CHAT_BOT; r++) {
+        chat_copy_row(r, (uint8_t)(r + 1));
+    }
+    chat_clear_line(CHAT_BOT);
+}
+
+static unsigned sb_line_addr(uint8_t idx)
+{
+    return (unsigned)(SB_ADDR + (unsigned)idx * 80u);
+}
+
+static void sb_store(uint8_t idx, const unsigned char *src)
+{
+    aux_abs_write(sb_line_addr(idx), src, 80);
+    aux_mainbank();
+}
+
+static void sb_load(uint8_t idx, unsigned char *dst)
+{
+    aux_abs_read(sb_line_addr(idx), dst, 80);
+    aux_mainbank();
+}
+
+static void sb_push_row(uint8_t row)
+{
+    chat_pack_row(row, (unsigned char *)g_io80);
+    sb_store(sb_head, (unsigned char *)g_io80);
+    sb_head++;
+    if (sb_head >= SB_LINES) {
+        sb_head = 0;
+    }
+    if (sb_count < SB_LINES) {
+        sb_count++;
+    }
+}
+
+static uint8_t sb_idx_from_oldest(uint8_t n)
+{
+    uint8_t oldest;
+
+    if (sb_count < SB_LINES) {
+        oldest = 0;
+    } else {
+        oldest = sb_head;
+    }
+    return (uint8_t)(((unsigned)oldest + (unsigned)n) % SB_LINES);
+}
+
+static void sb_paint(void)
+{
+    uint8_t i;
+    unsigned start;
+    unsigned logi;
+
+    if (sb_count > PANE + sb_view) {
+        start = (unsigned)sb_count - (unsigned)PANE - (unsigned)sb_view;
+    } else {
+        start = 0;
+    }
+    for (i = 0; i < PANE; i++) {
+        logi = start + i;
+        if (logi >= sb_count) {
+            chat_clear_line((uint8_t)(CHAT_TOP + i));
+        } else {
+            sb_load(sb_idx_from_oldest((uint8_t)logi), (unsigned char *)g_io80);
+            chat_unpack_row((uint8_t)(CHAT_TOP + i), (unsigned char *)g_io80);
+        }
+    }
+}
+
+static void sb_show_tail(void)
+{
+    sb_view = 0;
+    sb_paint();
+    if (sb_count >= PANE) {
+        chat_copy_row_up();
+        chat_y = CHAT_BOT;
+    } else {
+        chat_y = (uint8_t)(CHAT_TOP + sb_count);
+    }
+    chat_x = 0;
+    chat_clear_line(chat_y);
+}
+
+static void sb_pin_tail(void)
+{
+    if (!sb_view) {
+        return;
+    }
+    sb_show_tail();
+}
+
+static void sb_page(int dir)
+{
+    unsigned max_off;
+
+    if (dir < 0) {
+        if (!sb_count) {
+            return;
+        }
+        max_off = sb_count > PANE ? (unsigned)(sb_count - PANE) : 0;
+        if (sb_view < 255) {
+            sb_view++;
+        }
+        if ((unsigned)sb_view > max_off) {
+            sb_view = (uint8_t)max_off;
+        }
+        sb_paint();
+        return;
+    }
+    if (!sb_view) {
+        return;
+    }
+    sb_view--;
+    if (!sb_view) {
+        sb_show_tail();
+    } else {
+        sb_paint();
+    }
+}
+
+static void chat_row_done(void)
+{
+    sb_pin_tail();
+    sb_push_row(chat_y);
+    if (chat_y < CHAT_BOT) {
+        chat_y++;
+    } else {
+        chat_copy_row_up();
+    }
+    chat_x = 0;
+    chat_clear_line(chat_y);
 }
 
 void ui_set_perf(const char *s)
@@ -207,6 +355,9 @@ void ui_clear_chat(void)
     outn = 0;
     chat_x = 0;
     chat_y = CHAT_TOP;
+    sb_head = 0;
+    sb_count = 0;
+    sb_view = 0;
     for (r = CHAT_TOP; r <= CHAT_BOT; r++) {
         chat_clear_line(r);
     }
@@ -225,18 +376,13 @@ void ui_status(const char *msg)
 
 void ui_flush(void)
 {
+    sb_pin_tail();
     while (outn) {
         uint8_t room = (uint8_t)(80 - chat_x);
         uint8_t n;
 
         if (room == 0) {
-            chat_x = 0;
-            if (chat_y < CHAT_BOT) {
-                chat_y++;
-            } else {
-                chat_y = CHAT_TOP;
-            }
-            chat_clear_line(chat_y);
+            chat_row_done();
             room = 80;
         }
         n = outn < room ? outn : room;
@@ -247,13 +393,7 @@ void ui_flush(void)
             memmove(outbuf, outbuf + n, outn);
         }
         if (chat_x >= 80) {
-            chat_x = 0;
-            if (chat_y < CHAT_BOT) {
-                chat_y++;
-            } else {
-                chat_y = CHAT_TOP;
-            }
-            chat_clear_line(chat_y);
+            chat_row_done();
         }
     }
 }
@@ -261,13 +401,7 @@ void ui_flush(void)
 void ui_nl(void)
 {
     ui_flush();
-    chat_x = 0;
-    if (chat_y < CHAT_BOT) {
-        chat_y++;
-    } else {
-        chat_y = CHAT_TOP;
-    }
-    chat_clear_line(chat_y);
+    chat_row_done();
 }
 
 void ui_label(const char *s)
@@ -324,6 +458,7 @@ void ui_print_n(const char *s, unsigned n)
     unsigned i = 0;
 
     ui_flush();
+    sb_pin_tail();
     while (i < n) {
         char ch = s[i];
         uint8_t room;
@@ -335,13 +470,7 @@ void ui_print_n(const char *s, unsigned n)
             continue;
         }
         if (chat_x >= 80) {
-            chat_x = 0;
-            if (chat_y < CHAT_BOT) {
-                chat_y++;
-            } else {
-                chat_y = CHAT_TOP;
-            }
-            chat_clear_line(chat_y);
+            chat_row_done();
         }
         room = (uint8_t)(80 - chat_x);
         take = 0;
@@ -362,38 +491,64 @@ void ui_print_n(const char *s, unsigned n)
     }
 }
 
+static void prompt_lead(void)
+{
+    if (chat_x == 0) {
+        ui_label("You");
+    }
+}
+
 void ui_prompt(char *buf, uint8_t maxlen)
 {
     uint8_t n = 0;
+
     ui_flush();
     help_row();
-    gotoxy(0, INPUT_ROW);
-    cclear(80);
-    gotoxy(0, INPUT_ROW + 1);
-    cclear(80);
-    gotoxy(0, INPUT_ROW);
-    cputs("> ");
+    sb_pin_tail();
+    prompt_lead();
     buf[0] = 0;
+    cursor(1);
     for (;;) {
-        char c = cgetc();
+        char c;
+
+        gotoxy(chat_x, chat_y);
+        c = cgetc();
         if (c == '\r' || c == '\n') {
             break;
+        }
+        if (c == 0x0B || c == (char)CH_CURS_UP) {
+            uint8_t k = open_apple_down() ? 11 : 1;
+            while (k--) {
+                sb_page(-1);
+            }
+            continue;
+        }
+        if (c == 0x0A || c == (char)CH_CURS_DOWN) {
+            uint8_t k = open_apple_down() ? 11 : 1;
+            while (k--) {
+                sb_page(1);
+            }
+            continue;
+        }
+        if (sb_view) {
+            sb_pin_tail();
+            prompt_lead();
+            if (n) {
+                ui_print(buf);
+            }
+            continue;
         }
         if (c == 0x08 || c == 0x7f) {
             if (n) {
                 n--;
                 buf[n] = 0;
-                if (n < 78) {
-                    gotoxy((unsigned char)(2 + n), INPUT_ROW);
-                } else {
-                    gotoxy((unsigned char)(n - 78), INPUT_ROW + 1);
+                if (chat_x > 0) {
+                    chat_x--;
+                } else if (chat_y > CHAT_TOP) {
+                    chat_y--;
+                    chat_x = 79;
                 }
-                cputc(' ');
-                if (n < 78) {
-                    gotoxy((unsigned char)(2 + n), INPUT_ROW);
-                } else {
-                    gotoxy((unsigned char)(n - 78), INPUT_ROW + 1);
-                }
+                chat_blit(chat_x, chat_y, " ", 1, 0);
             }
             continue;
         }
@@ -404,12 +559,11 @@ void ui_prompt(char *buf, uint8_t maxlen)
         if ((unsigned char)c >= 32 && n + 1 < maxlen) {
             buf[n++] = c;
             buf[n] = 0;
-            if (n == 79) {
-                gotoxy(0, INPUT_ROW + 1);
-            }
-            cputc(c);
+            ui_print_ch(c);
+            ui_flush();
         }
     }
+    ui_nl();
 }
 
 int ui_confirm(const char *path, const char *kind, unsigned bytes)
@@ -418,15 +572,17 @@ int ui_confirm(const char *path, const char *kind, unsigned bytes)
     unsigned sec = est_secs_write(bytes);
     char c;
 
-    gotoxy(0, INPUT_ROW);
-    cclear(80);
-    gotoxy(0, INPUT_ROW + 1);
-    cclear(80);
-    gotoxy(0, INPUT_ROW);
+    ui_flush();
+    sb_pin_tail();
+    if (chat_x != 0) {
+        ui_nl();
+    }
     sprintf(line, "[%s %s  %u bytes ~%us] Y/N/E?", kind, path, bytes, sec);
     line[80] = 0;
-    cputs(line);
+    ui_print(line);
+    gotoxy(chat_x, chat_y);
     c = (char)toupper((unsigned char)cgetc());
+    ui_nl();
     if (c == 'Y') {
         return 1;
     }

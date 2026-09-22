@@ -2,11 +2,14 @@
 ; Aux-bank block copy for 128K IIe/IIc.
 ; Writes use RAMWRT from MAIN. Reads run in zp $50: RAMRD switches
 ; $0200-$BFFF, so a stub at $0300 fetches opcodes from aux and BRKs.
-; 80-col firmware owns aux $0400-$07FF; POST/answer use $4000-$BFFF.
+; 80-col firmware owns aux $0400-$07FF; scrollback $0800-$2FFF;
+; POST/answer use $4000-$BFFF.
 ;
         .export         _aux_present
         .export         _aux_write
         .export         _aux_read
+        .export         _aux_abs_write
+        .export         _aux_abs_read
         .export         _aux_mainbank
         .import         popax
         .include        "zeropage.inc"
@@ -117,6 +120,69 @@ set_auxptr:
         adc     #>AUX_BASE
         sta     ptr2+1
         rts
+
+set_auxptr_abs:
+        sta     ptr2
+        stx     ptr2+1
+        rts
+
+_aux_abs_write:
+        sta     tmp1
+        stx     tmp2
+        jsr     popax
+        sta     ptr1
+        stx     ptr1+1
+        jsr     popax
+        jsr     set_auxptr_abs
+        lda     tmp1
+        ora     tmp2
+        beq     @aw
+        php
+        sei
+        sta     CLR_RAMRD
+        sta     SET_RAMWRT
+        jsr     copy_to_aux
+        sta     CLR_RAMWRT
+        plp
+@aw:    rts
+
+_aux_abs_read:
+        sta     tmp1
+        stx     tmp2
+        jsr     popax
+        sta     ptr1
+        stx     ptr1+1
+        jsr     popax
+        jsr     set_auxptr_abs
+        lda     tmp1
+        ora     tmp2
+        beq     @arz
+        ldx     #0
+@asv:   lda     $50,x
+        sta     zpsv,x
+        inx
+        cpx     #stub_len
+        bcc     @asv
+        ldx     #0
+@ain:   lda     stub_img,x
+        sta     $50,x
+        inx
+        cpx     #stub_len
+        bcc     @ain
+        php
+        sei
+        jsr     $50
+        sta     CLR_RAMRD
+        sta     CLR_RAMWRT
+        sta     $C054
+        plp
+        ldx     #0
+@ars:   lda     zpsv,x
+        sta     $50,x
+        inx
+        cpx     #stub_len
+        bcc     @ars
+@arz:   rts
 
 copy_to_aux:
         ldy     #0

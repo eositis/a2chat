@@ -22,7 +22,6 @@ int main(int argc, char *argv[])
 {
     char *slash;
     int cfg_ok;
-    static uint8_t first_chat = 1;
 
 #ifndef A2CHAT_HOST
     __asm__("cld");
@@ -98,10 +97,6 @@ int main(int argc, char *argv[])
                 break;
             }
             continue;
-        }
-        if (first_chat) {
-            ui_clear_chat();
-            first_chat = 0;
         }
         ollama_send(line, 0);
     }
