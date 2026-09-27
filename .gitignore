@@ -10,3 +10,5 @@ a2chat/A2CHAT.SYSTEM
 a2chat/A2CHAT.CFG
 a2chat/tests/test_host
 a2chat/src/*.o
+pico6502/setup_picoZ80.sh
+pico6502/tzpuPico/
