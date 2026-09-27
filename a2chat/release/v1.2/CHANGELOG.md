@@ -24,8 +24,4 @@ Changes since `a2chat_v1.1` (15 September 2026).
 - `A2SOFT.TXT` is the Applesoft reference sent with `A2CHAT.TXT` on every chat.
 - `/cat` and `/load` use the current ProDOS prefix. A name without a leading `/` is under `PREFIX`.
 
-### Also in this span
-
-- `z2nettool` (A2NETTOOL) is a separate ProDOS utility: ping, traceroute, DNS lookup, WHOIS, nc, and nmap. It is not part of the A2CHAT disk images.
-
 Model selection from the server’s tag list is not in this release.
