@@ -49,7 +49,7 @@ Linked **before** `ip65_tcp.lib` / `ip65_apple2_uther2.lib` so stock modules are
 - `http65.c` — no `ack_window()`; POST bounce is 256 bytes (900-byte bounce did not fit BSS after the scrolling UI).
 - `ip65_icmp.s` — drop ICMP (no echo-reply over FILEIO).
 - `ip65_error.s` / `ip65_outbuf.s` — short strerror; DHCP scratch 300 bytes.
-- Patched copy of IP65 `tcp.s` (window 900 as `ldax #$8403`) via `tools/patch_ip65_tcp.py`; `ethernet_a2chat.s` + `eth_buffer.s` `eth_inp` 1024.
+- Patched copy of IP65 `tcp.s` (window 900 as `ldax #$8403`) via `tools/patch_ip65_tcp.py`; `ethernet_a2chat.s` + `eth_buffer.s` `eth_inp` 960.
 
 `make host-test` still passes. DHCP / static IP / long POST / stream should be checked on Uthernet (emulator or hardware). Watch `Timeout` (timer) and truncated RX (window vs buffer).
 
@@ -68,9 +68,9 @@ Linked **before** `ip65_tcp.lib` / `ip65_apple2_uther2.lib` so stock modules are
 
 Clock-card IRQs (NSC) **SED** and smash zero page; they are unsafe with this LC map. `clock_init` keeps **SEI**. Wall time is:
 
-1. **P8** — peek ProDOS `$BF92`/`$BF93` (hour/minute). Help row and `A2CHAT.LOG` stamps. Label `P8` (not a build number).
-2. **MFMS** — MegaFlash Pico ms timer + time string if present (`mfclock.s`, IIc ID `$FBB3=6`).
-3. **JIFFY** — local `timer_read()` (VBL ~16 ms, or MegaFlash ms). Stock IP65 WAIT is not used.
+1. **MFMS** — MegaFlash time string and ms timer when `CMD_GETDEVINFO` returns signature `$88 $74` (`mfclock.s`). Probed only on a ROM 4 or 5 IIc (`$FBB3=6`, `$FBBF=$04` or `$05`). The `$C0C3` ID toggle is not used: back-to-back reads see one prefetched byte on the Pico bus.
+2. **P8** — peek ProDOS `$BF92`/`$BF93` (hour/minute) when MegaFlash is absent. Help row and `A2CHAT.LOG` stamps. Label `P8` (not a build number). Seconds stay `00`.
+3. **JIFFY** — local `timer_read()` (VBL ~16 ms). Stock IP65 WAIT is not used.
 
 Elapsed for tok/s: MegaFlash `mf_get_ms()` when present, else jiffy delta. Reset at last successful POST `tcp_send` (`t_post`). First content byte is `t_first`. Bar after a reply looks like `3s 16t 5/s` (seconds, Ollama `eval_count`, tokens/sec). Help row shows `HH:MM:SS` and **B13** on the far right (P8 is not shown there).
 

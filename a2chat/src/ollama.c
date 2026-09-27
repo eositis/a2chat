@@ -2,42 +2,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <ctype.h>
 #include <ip65.h>
 #include <apple2_filetype.h>
-static const char WPRE[] = "<<A2W ";
-static const char WEND[] = "<<A2E>>";
 
 static uint16_t ans_len;
 static uint8_t ans_n;
 static char ans_buf[16];
-static uint8_t wm;
-static uint8_t wmode;
-static uint8_t wendm;
-static uint8_t wgot;
-static uint8_t wpn;
-static uint8_t wtn;
-static FILE *wpay;
-#define scratch g_io80
-static uint8_t saw_first;
-static uint32_t t_first;
-
-static void wreset(void)
-{
-    wm = 0;
-    wmode = 0;
-    wendm = 0;
-    wgot = 0;
-    wpn = 0;
-    wtn = 0;
-    scratch[0] = 0;
-    scratch[64] = 0;
-    if (wpay) {
-        fclose(wpay);
-        wpay = 0;
-    }
-}
-
 static void ans_flush(void)
 {
     if (!ans_n) {
@@ -52,10 +22,6 @@ static void ans_flush(void)
 
 static void emit_ans(char ch)
 {
-    if (!saw_first) {
-        saw_first = 1;
-        t_first = clock_elapsed_ms();
-    }
     ui_print_ch(ch);
     if (ans_n < sizeof(ans_buf)) {
         ans_buf[ans_n++] = ch;
@@ -70,10 +36,6 @@ static void emit_ans_n(const char *p, unsigned n)
     if (!n) {
         return;
     }
-    if (!saw_first) {
-        saw_first = 1;
-        t_first = clock_elapsed_ms();
-    }
     ui_print_n(p, n);
     ans_flush();
     if ((uint16_t)(ans_len + n) < A2CHAT_AUX_POST_MAX) {
@@ -85,446 +47,184 @@ static void emit_ans_n(const char *p, unsigned n)
 static void on_token(char ch, void *user)
 {
     (void)user;
-    if (wmode == 0 && wm == 0 && ch != '<') {
-        emit_ans(ch);
-        return;
-    }
-    if (wmode == 3) {
-        if (ch == WEND[wendm]) {
-            wendm++;
-            if (WEND[wendm] == 0) {
-                wgot = 1;
-                wmode = 0;
-                wendm = 0;
-                wm = 0;
-                if (wpay) {
-                    fclose(wpay);
-                    wpay = 0;
-                }
-            }
-            return;
-        }
-        if (wendm && wpay) {
-            fwrite(WEND, 1, wendm, wpay);
-            wendm = 0;
-            if (ch == WEND[0]) {
-                wendm = 1;
-                return;
-            }
-        }
-        if (wpay) {
-            fputc((unsigned char)ch, wpay);
-        }
-        emit_ans(ch);
-        return;
-    }
-    if (wmode == 1) {
-        if (ch == ' ') {
-            wmode = 2;
-            wtn = 0;
-            scratch[64] = 0;
-            return;
-        }
-        if (wpn + 1 < 64) {
-            scratch[wpn++] = ch;
-            scratch[wpn] = 0;
-        }
-        return;
-    }
-    if (wmode == 2) {
-        if (ch == '>') {
-            wmode = 5;
-            return;
-        }
-        if (wtn + 1 < 6) {
-            scratch[64 + wtn] = ch;
-            wtn++;
-            scratch[64 + wtn] = 0;
-        }
-        return;
-    }
-    if (wmode == 5) {
-        wmode = 3;
-        wendm = 0;
-        /* Do not fopen during TCP: ProDOS on an 8MB volume stalls
-         * Virtual ][ and drops the HTTP stream. */
-        return;
-    }
-    if (ch == WPRE[wm]) {
-        wm++;
-        if (WPRE[wm] == 0) {
-            wmode = 1;
-            wpn = 0;
-            scratch[0] = 0;
-            wm = 0;
-        }
-        return;
-    }
-    if (wm) {
-        uint8_t k;
-        for (k = 0; k < wm; k++) {
-            emit_ans(WPRE[k]);
-        }
-        wm = 0;
-        if (ch == WPRE[0]) {
-            wm = 1;
-            return;
-        }
-    }
     emit_ans(ch);
 }
 
 static void on_span(const char *p, unsigned n, void *user)
 {
-    unsigned i;
-
     (void)user;
-    if (!n) {
-        return;
-    }
-    if (wmode || wm) {
-        for (i = 0; i < n; i++) {
-            on_token(p[i], 0);
-        }
-        return;
-    }
-    for (i = 0; i < n; i++) {
-        if (p[i] == '<') {
-            for (i = 0; i < n; i++) {
-                on_token(p[i], 0);
-            }
-            return;
-        }
-    }
     emit_ans_n(p, n);
 }
 
-static uint8_t type_from_arg(const char *t)
-{
-    if (!t || !t[0]) {
-        return PRODOS_T_TXT;
-    }
-    if (!strcmp(t, "SYS") || !strcmp(t, "sys") || !strcmp(t, "FF")) {
-        return PRODOS_T_SYS;
-    }
-    if (!strcmp(t, "BIN") || !strcmp(t, "bin") || !strcmp(t, "06")) {
-        return PRODOS_T_BIN;
-    }
-    if (!strcmp(t, "BAS") || !strcmp(t, "bas") || !strcmp(t, "FC") ||
-        !strcmp(t, "fc")) {
-        return PRODOS_T_BAS;
-    }
-    if (!strcmp(t, "MD") || !strcmp(t, "md")) {
-        return PRODOS_T_TXT;
-    }
-    return PRODOS_T_TXT;
-}
 
-static uint8_t type_from_path(const char *path)
-{
-    const char *d;
-    char ext[5];
-    unsigned i;
+static uint8_t bas_lst;
+static const char nofile[] = "cannot open ";
 
-    d = strrchr(path, '.');
-    if (!d || !d[1]) {
-        return 0;
+/* A2CHAT.DTK runs in the idle RX buffer and writes A2CHAT.LST. */
+unsigned char __fastcall__ bas_ovl(const char *path);
+/* A2CHAT.TOK tokenizes aux[tok_src, tok_end) into a ProDOS BAS file. */
+unsigned char __fastcall__ bas_tok(const char *path);
+unsigned char bas_romsave(void);
+extern unsigned tok_src;
+extern unsigned tok_end;
+extern unsigned img_src;
+extern unsigned img_end;
+
+/* Append a prompt file at the end of the aux system-prompt buffer. */
+static void prompt_add(const char *name, unsigned *plen)
+{
+    FILE *pf;
+    size_t n;
+
+    pf = fopen((char *)name, "rb");
+    if (!pf) {
+        return;
     }
-    for (i = 0; i < 4 && d[i + 1]; i++) {
-        char c = d[i + 1];
-        if (c >= 'a' && c <= 'z') {
-            c = (char)(c - 32);
+    if (*plen && *plen < A2CHAT_PROMPT_MAX) {
+        g_io80[0] = '\n';
+        aux_write((unsigned)(A2CHAT_PROMPT_AUX + *plen),
+                  (const unsigned char *)g_io80, 1);
+        (*plen)++;
+    }
+    while (*plen < A2CHAT_PROMPT_MAX &&
+           (n = fread(g_io80, 1, sizeof(g_io80), pf)) > 0) {
+        if (*plen + (unsigned)n > A2CHAT_PROMPT_MAX) {
+            n = A2CHAT_PROMPT_MAX - *plen;
         }
-        ext[i] = c;
+        aux_write((unsigned)(A2CHAT_PROMPT_AUX + *plen),
+                  (const unsigned char *)g_io80, (unsigned)n);
+        *plen += (unsigned)n;
     }
-    ext[i] = 0;
-    if (!strcmp(ext, "BAS")) {
-        return PRODOS_T_BAS;
-    }
-    if (!strcmp(ext, "BIN") || !strcmp(ext, "SYS")) {
-        return PRODOS_T_BIN;
-    }
-    return PRODOS_T_TXT;
+    fclose(pf);
 }
 
-static int confirm_write(char *path, const char *kind, unsigned bytes, uint8_t ptype)
+/* Index of a ``` fence at or after `from`, or 0xFFFF. */
+static uint16_t find_ticks(uint16_t from)
 {
-    int r;
-    char edit[A2CHAT_PATH_MAX];
+    uint16_t i;
+    uint8_t n;
 
-    /* PREFIX (or cwd if PREFIX is empty) is the session workspace: text
-     * work files there do not need a prompt. Confirm generated BIN/SYS
-     * and anything outside the workspace. */
-    if (ptype != PRODOS_T_BIN && ptype != PRODOS_T_SYS &&
-        path_in_workspace(path)) {
-        return 1;
-    }
-    r = ui_confirm(path, kind, bytes);
-    if (r == 1) {
-        return 1;
-    }
-    if (r == 2) {
-        ui_print("\nNew path: ");
-        ui_prompt(edit, A2CHAT_PATH_MAX);
-        if (edit[0]) {
-            path_join_prefix(path, edit);
-            return 1;
-        }
-    }
-    return 0;
-}
+    n = 0;
+    for (i = from; i < ans_len; i++) {
+        unsigned char b;
 
-#if 0
-static int run_tool(struct jsonscan *js, char *result, unsigned rsz)
-{
-    char path[A2CHAT_PATH_MAX];
-    unsigned got = 0;
-    const char *pay = self_path("A2CHAT.PAY");
-    unsigned i;
-
-    result[0] = 0;
-    {
-        unsigned n;
-        for (n = 0; js->tool_name[n]; n++) {
-            char c = js->tool_name[n];
-            if (c >= 'A' && c <= 'Z') {
-                js->tool_name[n] = (char)(c + 32);
+        aux_read(i, &b, 1);
+        aux_mainbank();
+        if ((b & 0x7f) == '`') {
+            if (++n == 3) {
+                return (uint16_t)(i - 2);
             }
-        }
-    }
-    path_join_prefix(path, js->arg_path[0] ? js->arg_path : ".");
-    for (i = 0; path[i]; i++) {
-        if (path[i] == ' ' || path[i] == '\\' || path[i] == ':') {
-            strncpy(result, "ProDOS path required, not C: or DOS", rsz - 1);
-            return 0;
-        }
-    }
-
-    if (!strcmp(js->tool_name, "list_dir")) {
-        if (prodos_list(path, result, rsz) < 0) {
-            return -1;
-        }
-        return 0;
-    }
-    if (!strcmp(js->tool_name, "read_file")) {
-        unsigned len = js->arg_length ? js->arg_length : g_cfg.maxread;
-        int hex = 0;
-        uint8_t pt;
-
-        pt = js->arg_type[0] ? type_from_arg(js->arg_type) : type_from_path(path);
-        if (pt == PRODOS_T_BIN || pt == PRODOS_T_SYS) {
-            hex = 1;
-        }
-        if (prodos_read_to_aux(path, js->arg_offset, len, &got, hex) < 0) {
-            strncpy(result, "cannot open", rsz - 1);
-            return -1;
-        }
-        hist_append_aux('T', (uint16_t)got);
-        result[0] = 0;
-        ui_print("Read ");
-        ui_print(path);
-        ui_nl();
-        return 0;
-    }
-    if (!strcmp(js->tool_name, "write_file")) {
-        unsigned bytes = js->pay_bytes;
-        uint8_t pt = type_from_arg(js->arg_type);
-        int wr;
-
-        if (!js->arg_type[0]) {
-            uint8_t fromp = type_from_path(path);
-            if (fromp) {
-                pt = fromp;
-            }
-        }
-        if (!confirm_write(path, "write_file", bytes, pt)) {
-            strncpy(result, "user declined write", rsz - 1);
-            return 0;
-        }
-        if (pt == PRODOS_T_BAS) {
-            wr = prodos_write_bas(path, pay, 0);
-        } else if (pt == PRODOS_T_BIN || pt == PRODOS_T_SYS) {
-            unsigned aux = js->arg_auxtype ? js->arg_auxtype : 0x2000;
-            wr = prodos_write_hex_file(path, pay, pt, aux, 0);
         } else {
-            wr = prodos_write_file(path, pay, pt, 0, 0);
+            n = 0;
         }
-        if (wr < 0) {
-            strncpy(result, "write failed", rsz - 1);
-            return -1;
-        }
-        ui_print("Wrote ");
-        ui_print(path);
-        ui_nl();
-        strncpy(result, "wrote ok ", rsz - 1);
-        strncat(result, path, rsz - strlen(result) - 1);
-        return 0;
     }
-    if (!strcmp(js->tool_name, "create_bin")) {
-        unsigned aux = js->arg_auxtype ? js->arg_auxtype : 0x2000;
-        uint8_t pt = type_from_arg(js->arg_type);
-        if (pt == PRODOS_T_TXT) {
-            pt = PRODOS_T_BIN;
-        }
-        if (!confirm_write(path, "create_bin", js->pay_bytes / 2, pt)) {
-            strncpy(result, "user declined write", rsz - 1);
-            return 0;
-        }
-        if (prodos_write_hex_file(path, pay, pt, aux, 0) < 0) {
-            strncpy(result, "create_bin failed", rsz - 1);
-            return -1;
-        }
-        strncpy(result, "bin ok", rsz - 1);
-        return 0;
-    }
-    strncpy(result, "unknown tool", rsz - 1);
-    return -1;
-}
-#endif
-
-static void save_marked_file(void)
-{
-    char path[A2CHAT_PATH_MAX];
-    char src[A2CHAT_PATH_MAX];
-    uint8_t pt;
-    int wr;
-
-    if (!wgot || !scratch[0]) {
-        return;
-    }
-    strncpy(src, self_path("A2CHAT.WR"), sizeof(src) - 1);
-    src[sizeof(src) - 1] = 0;
-    path_join_prefix(path, scratch);
-    pt = scratch[64] ? type_from_arg(scratch + 64) : type_from_path(path);
-    if (!pt) {
-        pt = PRODOS_T_TXT;
-    }
-    if (!confirm_write(path, "write", 1, pt)) {
-        ui_print("Write skipped");
-        ui_nl();
-        return;
-    }
-    if (pt == PRODOS_T_BAS) {
-        wr = prodos_write_bas(path, src, 0);
-    } else if (pt == PRODOS_T_BIN || pt == PRODOS_T_SYS) {
-        wr = prodos_write_hex_file(path, src, pt, 0x2000, 0);
-    } else {
-        wr = prodos_write_file(path, src, pt, 0, 0);
-    }
-    if (wr < 0) {
-        ui_print("Write failed");
-        ui_nl();
-        return;
-    }
-    ui_print("Wrote ");
-    ui_print(path);
-    ui_nl();
+    return 0xffffu;
 }
 
-static int has_word(const char *t, const char *w)
+/* Reply text inside the first fence. The opening line (```basic) is skipped. */
+static uint16_t fence_body(uint16_t *end)
 {
-    unsigned i, j;
+    uint16_t a;
+    uint16_t s;
+    uint16_t b;
+    unsigned char c;
 
-    if (!t || !w) {
+    a = find_ticks(0);
+    if (a == 0xffffu) {
+        *end = ans_len;
         return 0;
     }
-    for (i = 0; t[i]; i++) {
-        for (j = 0; w[j]; j++) {
-            char a = t[i + j];
-            if (a >= 'A' && a <= 'Z') {
-                a = (char)(a + 32);
+    s = (uint16_t)(a + 3);
+    while (s < ans_len) {
+        aux_read(s, &c, 1);
+        aux_mainbank();
+        s++;
+        if (c == '\n' || c == '\r') {
+            if (s < ans_len) {
+                unsigned char nch;
+                aux_read(s, &nch, 1);
+                aux_mainbank();
+                if ((c == '\r' && nch == '\n') || (c == '\n' && nch == '\r')) {
+                    s++;
+                }
             }
-            if (a != w[j]) {
+            break;
+        }
+    }
+    b = find_ticks(s);
+    *end = (b == 0xffffu) ? ans_len : b;
+    return s;
+}
+
+/* Opening fence tag is basic, bas, or applesoft. */
+static int fence_says_basic(void)
+{
+    uint16_t a;
+    uint16_t i;
+    unsigned n;
+    char tag[10];
+    unsigned char c;
+
+    a = find_ticks(0);
+    if (a == 0xffffu) {
+        return 0;
+    }
+    i = (uint16_t)(a + 3);
+    n = 0;
+    while (i < ans_len) {
+        aux_read(i, &c, 1);
+        aux_mainbank();
+        i++;
+        if (c == ' ' || c == '\t') {
+            if (n) {
                 break;
             }
+            continue;
         }
-        if (!w[j]) {
-            return 1;
+        if (c == '\n' || c == '\r') {
+            break;
+        }
+        if (c >= 'a' && c <= 'z') {
+            c = (unsigned char)(c - 32);
+        }
+        if (n + 1 < sizeof(tag)) {
+            tag[n++] = (char)c;
         }
     }
-    return 0;
-}
-
-static void save_reply_file(const char *user_text)
-{
-    char path[A2CHAT_PATH_MAX];
-    FILE *f;
-    uint16_t off;
-
-    if (!user_text || !ans_len) {
-        return;
+    tag[n] = 0;
+    if (n == 3 && tag[0] == 'B' && tag[1] == 'A' && tag[2] == 'S') {
+        return 1;
     }
-    if (!has_word(user_text, ".md") && !has_word(user_text, "save") &&
-        !has_word(user_text, ".bas") && !has_word(user_text, "disk")) {
-        return;
+    if (n == 5 && tag[0] == 'B' && tag[1] == 'A' && tag[2] == 'S' &&
+        tag[3] == 'I' && tag[4] == 'C') {
+        return 1;
     }
-    if (has_word(user_text, ".bas")) {
-        memcpy(scratch, "PROG.BAS", 9);
-    } else {
-        memcpy(scratch, "NOTE.MD", 8);
-    }
-    path_join_prefix(path, scratch);
-    _filetype = has_word(user_text, ".bas") ? PRODOS_T_BAS : PRODOS_T_TXT;
-    _auxtype = has_word(user_text, ".bas") ? 0x0801 : 0;
-    f = fopen(path, "wb");
-    if (!f && g_cfg.prefix[0]) {
-        strncpy(path, scratch, sizeof(path) - 1);
-        path[sizeof(path) - 1] = 0;
-        f = fopen(path, "wb");
-    }
-    if (!f) {
-        ui_print("Write failed ");
-        ui_print(path);
-        ui_nl();
-        return;
-    }
-    off = 0;
-    while (off < ans_len) {
-        unsigned char buf[16];
-        uint16_t n = (uint16_t)(ans_len - off);
-        if (n > 16) {
-            n = 16;
-        }
-        aux_read(off, buf, n);
-        fwrite(buf, 1, n, f);
-        off += n;
-    }
-    fclose(f);
-    ui_print("Wrote ");
-    ui_print(path);
-    ui_nl();
+    return n == 9 && tag[0] == 'A' && tag[1] == 'P' && tag[2] == 'P' &&
+           tag[3] == 'L' && tag[4] == 'E' && tag[5] == 'S' && tag[6] == 'O' &&
+           tag[7] == 'F' && tag[8] == 'T';
 }
 
 static int write_body(const char *user_text, const char *attach_path, uint16_t *jlen)
 {
+    uint8_t use_lst;
     uint16_t off;
     FILE *af;
-    FILE *pf;
     size_t n;
     unsigned plen;
 
-    /* Read A2CHAT.TXT with the file closed before any aux JSON or TCP.
+    /* Read prompt files with the file closed before any aux JSON or TCP.
      * FILEIO $BA00 is also eth_outp (NBUFS=1). Do not put a 128-byte
      * buffer on the C stack: ollama_send already holds jsonscan (~130B)
      * and the stack is only $100, ending at FILEIO. */
+    use_lst = bas_lst;
+    bas_lst = 0;
     plen = 0;
     aux_mainbank();
-    pf = fopen("A2CHAT.TXT", "rb");
-    if (!pf) {
-        pf = fopen("A2CHAT.TX", "rb");
+    prompt_add("A2CHAT.TXT", &plen);
+    if (!plen) {
+        prompt_add("A2CHAT.TX", &plen);
     }
-    if (pf) {
-        while (plen < A2CHAT_PROMPT_MAX &&
-               (n = fread(g_io80, 1, sizeof(g_io80), pf)) > 0) {
-            if (plen + (unsigned)n > A2CHAT_PROMPT_MAX) {
-                n = A2CHAT_PROMPT_MAX - plen;
-            }
-            aux_write((unsigned)(A2CHAT_PROMPT_AUX + plen),
-                      (const unsigned char *)g_io80, (unsigned)n);
-            plen += (unsigned)n;
-        }
-        fclose(pf);
-    }
+    prompt_add("A2SOFT.TXT", &plen);
     aux_mainbank();
 
     off = 0;
@@ -560,7 +260,7 @@ static int write_body(const char *user_text, const char *attach_path, uint16_t *
             off = json_escape_aux(off, user_text, (unsigned)strlen(user_text));
         }
         if (attach_path && attach_path[0]) {
-            af = fopen((char *)attach_path, "rb");
+            af = fopen(use_lst ? "A2CHAT.LST" : (char *)attach_path, "rb");
             if (!af) {
                 return -2;
             }
@@ -574,6 +274,18 @@ static int write_body(const char *user_text, const char *attach_path, uint16_t *
                        (n = fread(g_io80, 1, sizeof(g_io80), af)) > 0) {
                     if (total + (unsigned)n > g_cfg.maxread) {
                         n = g_cfg.maxread - total;
+                    }
+                    {
+                        unsigned i;
+                        for (i = 0; i < (unsigned)n; i++) {
+                            unsigned char c = (unsigned char)g_io80[i];
+                            if (c == '\r') {
+                                c = '\n';
+                            } else if (c >= 0x80) {
+                                c = (unsigned char)(c & 0x7f);
+                            }
+                            g_io80[i] = (char)c;
+                        }
                     }
                     off = json_escape_aux(off, g_io80, (unsigned)n);
                     total += (unsigned)n;
@@ -594,6 +306,8 @@ static int write_body(const char *user_text, const char *attach_path, uint16_t *
     return off ? 0 : -1;
 }
 
+void iobuf_reclaim(void);
+
 int ollama_send(const char *user_text, const char *attach_path)
 {
     uint32_t addr;
@@ -601,17 +315,21 @@ int ollama_send(const char *user_text, const char *attach_path)
     int rc;
     uint16_t jlen;
 
+    iobuf_reclaim();
+
 #ifndef A2CHAT_HOST
     __asm__("cld");
 #endif
 
     if (!g_net_ok) {
+        bas_lst = 0;
         ui_print("Network not ready");
         ui_nl();
         return -1;
     }
     addr = parse_dotted_quad(g_cfg.host);
     if (!addr) {
+        bas_lst = 0;
         ui_print("HOST must be dotted IPv4 in v1");
         ui_nl();
         return -1;
@@ -623,7 +341,7 @@ int ollama_send(const char *user_text, const char *attach_path)
     js.on_span = on_span;
     rc = write_body(user_text, attach_path, &jlen);
     if (rc == -2) {
-        ui_print("cannot open ");
+        ui_print(nofile);
         ui_print(attach_path);
         ui_nl();
         return -1;
@@ -640,19 +358,17 @@ int ollama_send(const char *user_text, const char *attach_path)
     }
     ans_len = 0;
     ans_n = 0;
-    saw_first = 0;
-    t_first = 0;
-    wreset();
     js.user = 0;
     ui_status("Talking...");
     js.pay = 0;
     aux_mainbank();
+    /* Log the prompt before TCP. The POST reuses output_buffer, which is
+     * also the 250-character line (the C stack owns $BE00). */
+    if (user_text && user_text[0]) {
+        hist_append('U', user_text, (uint16_t)strlen(user_text));
+    }
     rc = http_post_aux(addr, g_cfg.port, cfg_api_path(&g_cfg, "/api/chat"),
                        jlen, jsonscan_on_bytes, &js);
-    if (wpay) {
-        fclose(wpay);
-        wpay = 0;
-    }
     ans_flush();
     ui_flush();
     if (rc < 0) {
@@ -663,33 +379,15 @@ int ollama_send(const char *user_text, const char *attach_path)
     }
     ui_nl();
     {
-        uint32_t dt;
-        unsigned sec;
-        unsigned tok;
-        unsigned tps;
-        char line[40];
+        char line[16];
 
-        dt = clock_post_ms();
-        sec = (unsigned)(dt / 1000ul);
-        if (sec == 0) {
-            sec = 1;
-        }
-        tok = (unsigned)js.eval_count;
-        tps = tok / sec;
-        sprintf(line, "%us %ut %u/s", sec, tok, tps);
+        sprintf(line, "%u tokens", (unsigned)js.eval_count);
         ui_set_perf(line);
         ui_redraw_chrome();
     }
     if (!js.eval_count && ans_len) {
         ui_print("stream cut off");
         ui_nl();
-    }
-    save_marked_file();
-    if (!wgot) {
-        save_reply_file(user_text);
-    }
-    if (user_text && user_text[0]) {
-        hist_append('U', user_text, (uint16_t)strlen(user_text));
     }
     hist_append_aux('A', ans_len);
     return 0;
@@ -721,13 +419,14 @@ static void cfg_edit(void)
         g_cfg.slot = (uint8_t)atoi(buf);
     }
     cfg_save(&g_cfg, self_path("A2CHAT.CFG"));
-    ui_print("Saved config. Restart to re-init net if slot/IP changed.");
+    ui_print("Saved config");
     ui_nl();
 }
 
 int cmd_handle(char *line)
 {
     char *arg = line;
+    iobuf_reclaim();
     while (*arg && *arg != ' ') {
         arg++;
     }
@@ -756,7 +455,7 @@ int cmd_handle(char *line)
         ui_nl();
         ui_print("Created by Elmars Ositis");
         ui_nl();
-        ui_print("14 September 2026");
+        ui_print(A2CHAT_DATE);
         ui_nl();
         ui_print("http://github.com/eositis/a2chat");
         ui_nl();
@@ -780,8 +479,159 @@ int cmd_handle(char *line)
     }
     if (!strcmp(line, "/cat")) {
         char path[A2CHAT_PATH_MAX];
-        path_join_open(path, arg[0] ? arg : ".");
+        if (!arg[0]) {
+            prodos_list(0, 0, 0);
+            return 0;
+        }
+        path_join_open(path, arg);
+        if (!path[0]) {
+            ui_print(nofile);
+            ui_print(arg);
+            ui_nl();
+            return 0;
+        }
         prodos_list(path, 0, 0);
+        return 0;
+    }
+    if (!strcmp(line, "/load")) {
+        char path[A2CHAT_PATH_MAX];
+        char *q;
+
+        if (!arg[0]) {
+            ui_print("usage: /load NAME [query]");
+            ui_nl();
+            return 0;
+        }
+        q = arg;
+        while (*q && *q != ' ') {
+            q++;
+        }
+        if (*q) {
+            *q++ = 0;
+            while (*q == ' ') {
+                q++;
+            }
+        }
+        path_join_open(path, arg);
+        if (!path[0]) {
+            ui_print(nofile);
+            ui_print(arg);
+            ui_nl();
+            return 0;
+        }
+        bas_lst = bas_ovl(path);
+        if (!q[0]) {
+            ui_print("Query: ");
+            ui_prompt(line, A2CHAT_LINE_MAX);
+            q = line;
+        }
+        ollama_send(q[0] ? q : "Review this file.", path);
+        return 0;
+    }
+    if (!strcmp(line, "/save") || !strcmp(line, "/s")) {
+        char path[A2CHAT_PATH_MAX];
+        char pick[4];
+        uint8_t pt;
+        unsigned auxt;
+        FILE *f;
+        uint16_t off;
+
+        if (!arg[0]) {
+            ui_print("usage: /save NAME");
+            ui_nl();
+            return 0;
+        }
+        if (!ans_len) {
+            ui_print("No reply.");
+            ui_nl();
+            return 0;
+        }
+        pt = 0;
+        if (fence_says_basic()) {
+            ui_print("Save as BASIC? Y/N ");
+            ui_prompt(pick, sizeof(pick));
+            if (pick[0] == 'Y' || pick[0] == 'y') {
+                pt = PRODOS_T_BAS;
+                auxt = 0x0801;
+            }
+        }
+        if (!pt) {
+            ui_print("1 TXT  2 BAS  3 BIN  4 SYS: ");
+            ui_prompt(pick, sizeof(pick));
+            switch (pick[0]) {
+            case '2':
+                pt = PRODOS_T_BAS;
+                auxt = 0x0801;
+                break;
+            case '3':
+                pt = PRODOS_T_BIN;
+                auxt = 0x2000;
+                break;
+            case '4':
+                pt = PRODOS_T_SYS;
+                auxt = 0x2000;
+                break;
+            default:
+                pt = PRODOS_T_TXT;
+                auxt = 0;
+                break;
+            }
+        }
+        path_join_prefix(path, arg);
+        {
+            uint16_t end = 0;
+            off = fence_body(&end);
+            if (off >= end) {
+                ui_print("No program between fences");
+                ui_nl();
+                return 0;
+            }
+            if (pt == PRODOS_T_BAS) {
+                tok_src = off;
+                tok_end = end;
+                if (!bas_romsave()) {
+                    ui_print("Not a BASIC listing");
+                    ui_nl();
+                    return 0;
+                }
+                /* Image is the token file Applesoft SAVE would write. */
+                off = img_src;
+                end = img_end;
+                remove(path);
+            }
+            _filetype = pt;
+            _auxtype = (unsigned)auxt;
+            f = fopen(path, "wb");
+            if (!f) {
+                ui_print("Write failed ");
+                ui_print(path);
+                ui_nl();
+                return 0;
+            }
+            while (off < end) {
+                unsigned char buf[16];
+                unsigned i;
+                uint16_t n = (uint16_t)(end - off);
+                if (n > 16) {
+                    n = 16;
+                }
+                aux_read(off, buf, n);
+                aux_mainbank();
+                if (pt == PRODOS_T_TXT) {
+                    for (i = 0; i < n; i++) {
+                        if (buf[i] == '\n') {
+                            buf[i] = '\r';
+                        }
+                    }
+                }
+                fwrite(buf, 1, n, f);
+                off = (uint16_t)(off + n);
+            }
+        }
+        fclose(f);
+        ui_print("Wrote ");
+        ui_print(path);
+        ui_nl();
         return 0;
     }
     if (!strcmp(line, "/read") || !strcmp(line, "/r")) {
@@ -792,10 +642,11 @@ int cmd_handle(char *line)
             return 0;
         }
         path_join_open(path, arg);
+        bas_lst = bas_ovl(path);
         {
             FILE *tf = fopen(path, "rb");
             if (!tf) {
-                ui_print("cannot open ");
+                ui_print(nofile);
                 ui_print(path);
                 ui_nl();
                 return 0;
@@ -805,20 +656,7 @@ int cmd_handle(char *line)
         ollama_send("Discuss this file. Do not write a program unless asked.", path);
         return 0;
     }
-    if (!strcmp(line, "/save") || !strcmp(line, "/s")) {
-        char path[A2CHAT_PATH_MAX];
-        if (!arg[0]) {
-            ui_print("usage: /save PATH");
-            ui_nl();
-            return 0;
-        }
-        path_join_prefix(path, arg);
-        prodos_write_file(path, self_path("A2CHAT.LOG"), PRODOS_T_TXT, 0, 1);
-        ui_print("Saved log");
-        ui_nl();
-        return 0;
-    }
-    ui_print("commands: /config /cat /model /ping /new /quit /about");
+    ui_print("see the help row");
     ui_nl();
     return 0;
 }

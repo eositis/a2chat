@@ -148,48 +148,79 @@ static void path_strip_slash(char *p)
     }
 }
 
+/* ProDOS pathname, not just the leaf. Absolute paths stay absolute.
+ * A relative path is joined onto PREFIX when PREFIX is set, otherwise
+ * it is left for the current ProDOS prefix. Empty input yields "". */
 static void path_join_ex(char *dst, const char *in, int writing)
 {
-    char leaf[16];
-    const char *prebase;
-    size_t n;
+    static char norm[A2CHAT_PATH_MAX];
+    unsigned n = 0;
+    unsigned seg = 0;
+    int dotted = 0;
+    const char *s = in;
 
-    if (!in || !in[0] || (in[0] == '.' && in[1] == 0)) {
+    (void)writing;
+    dst[0] = 0;
+    if (!s || !s[0] || (s[0] == '.' && s[1] == 0)) {
         if (g_cfg.prefix[0]) {
             strncpy(dst, g_cfg.prefix, A2CHAT_PATH_MAX - 1);
             dst[A2CHAT_PATH_MAX - 1] = 0;
             path_strip_slash(dst);
-            return;
         }
-        dst[0] = '.';
-        dst[1] = 0;
         return;
     }
-    prodos_leaf_name(leaf, in);
-    if (g_cfg.prefix[0]) {
-        prebase = basename_path(g_cfg.prefix);
-        if (!strcmp(leaf, prebase)) {
-            if (writing) {
-                strcpy(leaf, "NOTE.MD");
-            } else {
-                strncpy(dst, g_cfg.prefix, A2CHAT_PATH_MAX - 1);
-                dst[A2CHAT_PATH_MAX - 1] = 0;
-                path_strip_slash(dst);
-                return;
+    while (*s && n + 1 < A2CHAT_PATH_MAX) {
+        unsigned char c = (unsigned char)*s++;
+
+        if (c == '/') {
+            if (n == 0 || norm[n - 1] != '/') {
+                norm[n++] = '/';
+                seg = 0;
+                dotted = 0;
             }
+            continue;
         }
+        if (c >= 'a' && c <= 'z') {
+            c = (unsigned char)(c - 32);
+        }
+        if (c == '.') {
+            if (dotted || seg == 0 || seg >= 15) {
+                continue;
+            }
+            norm[n++] = '.';
+            seg++;
+            dotted = 1;
+            continue;
+        }
+        if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) {
+            continue;
+        }
+        if (seg >= 15 || (seg == 0 && c >= '0' && c <= '9')) {
+            continue;
+        }
+        norm[n++] = (char)c;
+        seg++;
+    }
+    norm[n] = 0;
+    path_strip_slash(norm);
+    if (!norm[0]) {
+        return;
+    }
+    if (norm[0] != '/' && g_cfg.prefix[0]) {
+        size_t pn;
+
         strncpy(dst, g_cfg.prefix, A2CHAT_PATH_MAX - 1);
         dst[A2CHAT_PATH_MAX - 1] = 0;
         path_strip_slash(dst);
-        n = strlen(dst);
-        if (n && dst[n - 1] != '/' && n + 1 < A2CHAT_PATH_MAX) {
-            dst[n++] = '/';
-            dst[n] = 0;
+        pn = strlen(dst);
+        if (pn && dst[pn - 1] != '/' && pn + 1 < A2CHAT_PATH_MAX) {
+            dst[pn++] = '/';
+            dst[pn] = 0;
         }
-        strncat(dst, leaf, A2CHAT_PATH_MAX - 1 - strlen(dst));
+        strncat(dst, norm, A2CHAT_PATH_MAX - 1 - strlen(dst));
         return;
     }
-    strncpy(dst, leaf, A2CHAT_PATH_MAX - 1);
+    strncpy(dst, norm, A2CHAT_PATH_MAX - 1);
     dst[A2CHAT_PATH_MAX - 1] = 0;
 }
 
@@ -204,18 +235,20 @@ void path_join_open(char *dst, const char *in)
 }
 
 #ifndef A2CHAT_HOST
+extern unsigned char dirblk[];
+
 /* cc65 opendir() mallocs a 512-byte DIR; our heap is the few bytes
  * between BSS and FILEIO $BA00, so it always fails. Read the directory
  * file with fopen (uses the 1K FILEIO buffer) and parse entries. */
 static int dir_try(char *path)
 {
     FILE *f;
-    unsigned pos;
     unsigned first;
     unsigned count;
     unsigned i;
     unsigned nl;
     unsigned st;
+    unsigned ent;
 
     path_strip_slash(path);
     if (!path[0] || (path[0] == '.' && path[1] == 0)) {
@@ -225,55 +258,59 @@ static int dir_try(char *path)
     if (!f) {
         return -1;
     }
-    pos = 0;
     first = 1;
     count = 0;
-    for (;;) {
-        unsigned k = pos & 511u;
+    /* ProDOS accepts a directory READ only when the count is 512. */
+    while (fread(dirblk, 1, 512, f) == 512) {
+        for (ent = 0; ent < 13; ent++) {
+            unsigned char *e = dirblk + 4 + ent * 39;
+            unsigned ft;
+            const char *tag;
+            char name[16];
 
-        if (k < 4) {
-            if (fread(iobuf, 1, 4 - k, f) != 4 - k) {
-                break;
+            st = e[0] >> 4;
+            nl = e[0] & 0x0F;
+            if (first) {
+                first = 0;
+                if (st != 0x0E && st != 0x0F) {
+                    fclose(f);
+                    return -1;
+                }
+                ui_print(path);
+                ui_nl();
+                continue;
             }
-            pos += 4 - k;
-            continue;
-        }
-        if (k == 511) {
-            if (fgetc(f) == EOF) {
-                break;
+            if (!nl || st == 0 || st == 0x0E || st == 0x0F) {
+                continue;
             }
-            pos++;
-            continue;
-        }
-        if (fread(iobuf, 1, 39, f) != 39) {
-            break;
-        }
-        pos += 39;
-        st = ((unsigned char)iobuf[0]) >> 4;
-        nl = ((unsigned char)iobuf[0]) & 0x0F;
-        if (first) {
-            first = 0;
-            if (st != 0x0E && st != 0x0F) {
-                fclose(f);
-                return -1;
+            if (nl > 15) {
+                nl = 15;
             }
-            ui_print(path);
+            ft = e[0x10];
+            tag = "";
+            if (ft == 0x04) {
+                tag = " TXT";
+            } else if (ft == 0x06) {
+                tag = " BIN";
+            } else if (ft == 0xFC) {
+                tag = " BAS";
+            } else if (ft == 0xFF) {
+                tag = " SYS";
+            } else if (ft == 0x0F) {
+                tag = " DIR";
+            }
+            for (i = 0; i < nl; i++) {
+                name[i] = (char)(e[i + 1] & 0x7f);
+            }
+            name[nl] = 0;
+            ui_print(name);
+            ui_print(tag);
             ui_nl();
-            continue;
+            if (++count >= A2CHAT_DIR_MAX) {
+                break;
+            }
         }
-        if (!nl || st == 0 || st == 0x0E || st == 0x0F) {
-            continue;
-        }
-        if (nl > 15) {
-            nl = 15;
-        }
-        for (i = 0; i < nl; i++) {
-            iobuf[i] = (char)((unsigned char)iobuf[i + 1] & 0x7f);
-        }
-        iobuf[nl] = 0;
-        ui_print(iobuf);
-        ui_nl();
-        if (++count >= A2CHAT_DIR_MAX) {
+        if (count >= A2CHAT_DIR_MAX) {
             break;
         }
     }
@@ -296,12 +333,18 @@ int prodos_list(const char *path, char *out, unsigned outsz)
     (void)out;
     (void)outsz;
 #ifndef A2CHAT_HOST
+    /* An explicit path is only that directory. Falling through would
+     * list the launch folder and hide a bad path. */
     if (path && path[0]) {
         strncpy(try, path, sizeof(try) - 1);
         try[sizeof(try) - 1] = 0;
         if (dir_try(try) == 0) {
             return 0;
         }
+        ui_print("cannot open ");
+        ui_print(try);
+        ui_nl();
+        return -1;
     }
     if (g_cfg.prefix[0]) {
         strncpy(try, g_cfg.prefix, sizeof(try) - 1);
@@ -309,8 +352,7 @@ int prodos_list(const char *path, char *out, unsigned outsz)
         if (dir_try(try) == 0) {
             return 0;
         }
-    }
-    if (p8_prefix(iobuf) && iobuf[0]) {
+    } else if (p8_prefix(iobuf) && iobuf[0]) {
         strncpy(try, iobuf, sizeof(try) - 1);
         try[sizeof(try) - 1] = 0;
         if (dir_try(try) == 0) {
@@ -318,8 +360,7 @@ int prodos_list(const char *path, char *out, unsigned outsz)
         }
     }
 #endif
-    ui_print("cannot open ");
-    ui_print(path && path[0] ? (char *)path : ".");
+    ui_print("cannot open .");
     ui_nl();
     return -1;
 }

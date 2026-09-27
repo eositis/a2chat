@@ -11,6 +11,7 @@
 
 RDVBLBAR        = $C019
 MACHID          = $FBB3
+ROMVER          = $FBBF
 SLOTWID         = $FBC0
 
         .bss
@@ -31,8 +32,14 @@ timer_init:
         cmp     #6
         bne     @done
         lda     SLOTWID
+        cmp     #$E0
+        beq     @done
+        lda     ROMVER
+        cmp     #4
+        beq     @mf
+        cmp     #5
         bne     @done
-        jsr     _mf_present
+@mf:    jsr     _mf_present
         cmp     #1
         bne     @done
         sta     use_mf

@@ -14,11 +14,11 @@
 #include <ctype.h>
 
 #define TCP_MAX 900
-#define BOUNCE 256
+#define BOUNCE 216
 
-static char pkt[256];
+static char pkt[216];
 #define hdr pkt
-#define bod (pkt + 200)
+#define bod (pkt + 160)
 #define bounce ((unsigned char *)pkt)
 
 static uint8_t rx_eof;
@@ -351,15 +351,45 @@ int http_post_aux(uint32_t addr, uint16_t port, const char *url_path,
     return rc;
 }
 
+/* ip65 gives up after about 7 seconds. Four tries is the 30 second budget. */
+static int connect_window(uint32_t addr, uint16_t port)
+{
+    uint8_t i;
+
+    for (i = 0; i < 4; i++) {
+        if (ui_aborted()) {
+            strcpy(g_http_err, "recv aborted");
+            return -1;
+        }
+        if (!tcp_connect(addr, port, on_tcp)) {
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static int connect_30(uint32_t addr, uint16_t port)
+{
+    uint8_t try;
+
+    for (try = 0; try < 3; try++) {
+        ui_status(try ? "Retry connect..." : "Connecting...");
+        if (!connect_window(addr, port)) {
+            return 0;
+        }
+        if (g_http_err[0]) {
+            return -1;
+        }
+    }
+    strcpy(g_http_err, "TCP connect failed");
+    return -1;
+}
+
 int http_probe_tags(uint32_t addr, uint16_t port)
 {
-    int rc;
-
     g_http_err[0] = 0;
-    ui_status("TCP connect to Ollama...");
-    rx_reset(0, 0, bod, 56);
-    if (tcp_connect(addr, port, on_tcp)) {
-        strcpy(g_http_err, "TCP connect failed");
+    rx_reset(0, 0, 0, 0);
+    if (connect_30(addr, port)) {
         return -1;
     }
     sprintf(hdr,
@@ -377,14 +407,5 @@ int http_probe_tags(uint32_t addr, uint16_t port)
     if (wait_done() < 0) {
         return -1;
     }
-    rc = finish_status();
-    if (rc < 0) {
-        return rc;
-    }
-    if (g_cfg.model[0] && strstr(bod, g_cfg.model)) {
-        strcpy(g_http_err, "HTTP 200, model listed");
-        return 1;
-    }
-    strcpy(g_http_err, "HTTP 200, model not in tags");
-    return 0;
+    return finish_status();
 }

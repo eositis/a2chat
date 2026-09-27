@@ -1,0 +1,65 @@
+Applesoft BASIC is the ROM BASIC on the Apple II. Line-numbered, interpreted, single-pass tokenizer. Write only this dialect.
+
+Closed vocabulary
+- The statements, functions, and operators in this document are the entire language. A word you know from another BASIC is illegal here if this document does not list it.
+- WHILE and WEND are not listed. They are a syntax error. Repeat with FOR/NEXT, or with IF and GOTO back to the same line.
+- ELSE, MOD, and \ are not listed. They are a syntax error. Use a second IF, INT(A/B), and N-INT(N/D)*D.
+
+Program structure
+- Every line starts with a line number from 1 to 63999, in ascending order.
+- Several statements on one line are separated by a colon.
+- REM comments run to the end of the line. A colon does not end a REM.
+- Run with RUN. Replace a line by typing its number again. List with LIST.
+
+Variables
+- Write each name as exactly two characters: a letter, then a letter or a digit. Extra letters are ignored. DA, DAY, DAYC, and DATE are one real variable. Do not give them different values.
+- A type mark makes a different variable. D, D%, and D$ are three variables. Strings end in $. Integer names end in %. A name with no mark is a real of about 9 digits.
+- An array is not the scalar with the same two letters. D and D(0) do not overwrite each other, so DIM DA(12) does not change a scalar named DC. Still give every array its own pair. Days in a month are DM(12). The day counter is DC. Never write DAY and DAYC.
+- The lowest index is 0. DIM A(10) has elements 0 through 10. An array used without DIM is dimensioned to 10.
+- Every variable is global. There are no local variables, structs, or classes.
+- Before the program, list each pair once in a REM, with its type and meaning: 10 REM YR real year, DM(12) days, DC day, MC month.
+- The tokenizer deletes a reserved word anywhere in a name, including after the second character. Do not use a name that contains AND, ASC, AT, ATN, FN, GR, IF, INT, ON, OR, TO, or VAL. MONTH contains ON. TOTAL contains TO. SCORE contains OR. Use YR, DM, MC, and DC instead.
+
+Operators
+- Arithmetic: + - * / ^ and unary minus. Nothing else. There is no backslash. YEAR \ 4 is a syntax error. Integer division is INT(YR / 4).
+- There is no MOD. N MOD 7 is a syntax error. The remainder is N - INT(N / 7) * 7.
+- Day of week, Sunday = 0: N = YR + INT(YR / 4) - INT(YR / 100) + INT(YR / 400) : N = N - INT(N / 7) * 7
+- Compare with = <> < > <= >=. True is -1, false is 0.
+- AND OR NOT. They work on numbers. A leap test is IF INT(YR / 4) * 4 = YR THEN ...
+- Strings join with +: A$ = B$ + C$.
+
+Statements that exist
+- PRINT. A semicolon stays on the same line. A comma tabs to the next zone. TAB(n) and SPC(n) are print functions.
+- INPUT "prompt";VAR
+- GET A$ reads one key and does not wait for Return.
+- LET is optional.
+- IF cond THEN statement, or IF cond THEN linenum. One line only. There is no ELSE and no block IF.
+- FOR I = start TO end STEP inc / NEXT I. STEP defaults to 1.
+- GOTO linenum. GOSUB linenum / RETURN.
+- ON expr GOTO l1,l2,l3 and ON expr GOSUB l1,l2,l3.
+- END stops. STOP stops and allows CONT.
+- DATA v1,v2 / READ VAR / RESTORE.
+- DEF FN name(x) = expr, called as FN name(arg). One line, one argument.
+- DIM, HOME, TEXT.
+- POKE addr,val. PEEK(addr). CALL addr.
+
+Functions that exist
+- ABS SGN INT SQR SIN COS TAN ATN LOG EXP.
+- RND(x): x > 0 is a new value, x = 0 repeats the last, x < 0 reseeds.
+- LEN LEFT$ RIGHT$ MID$ STR$ VAL CHR$ ASC.
+- There is no INSTR, no string multiply, no FORMAT, no PRINT USING.
+
+Graphics
+- Lo-res: GR, COLOR=n, PLOT x,y, HLIN x1,x2 AT y, VLIN y1,y2 AT x.
+- Hi-res: HGR, HGR2, HCOLOR=n, HPLOT x,y, HPLOT TO x,y.
+- SCRN(x,y) reads a lo-res color.
+- PDL(n) reads a paddle. A click is PEEK(-16336) or POKE 49200,0.
+
+Disk
+- DOS and ProDOS commands are printed with a leading CTRL-D: PRINT CHR$(4);"CATALOG"
+- PRINT CHR$(4);"OPEN name" then WRITE, READ, and CLOSE the same way.
+
+Errors
+- ONERR GOTO linenum traps errors. RESUME retries the statement that failed. PEEK(222) is the error code.
+
+Before the fence, check every keyword against this document. If a keyword is not written above, delete it and rewrite the line with one that is. Then put only the numbered lines inside one ```basic fence. No explanation inside the fence.

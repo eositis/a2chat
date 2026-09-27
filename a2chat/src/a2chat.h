@@ -6,13 +6,15 @@
 #include <stdio.h>
 #include <stddef.h>
 
-#define A2CHAT_BUILD 29
-#define A2CHAT_BUILD_STR "29"
-#define A2CHAT_VERSION "1.1"
+#define A2CHAT_BUILD 64
+#define A2CHAT_BUILD_STR "64"
+#define A2CHAT_VERSION "1.2"
+/* About date. Change this whenever A2CHAT_BUILD changes. */
+#define A2CHAT_DATE "27 September 2026"
 #define A2CHAT_OLLA_PORT 40114u
-#define A2CHAT_PROMPT_MAX 240
+#define A2CHAT_PROMPT_MAX 0x2800u
 #define A2CHAT_PATH_MAX 48
-#define A2CHAT_LINE_MAX 120
+#define A2CHAT_LINE_MAX 251
 #define A2CHAT_TOOL_NAME_MAX 16
 #define A2CHAT_DIR_MAX 64
 #define A2CHAT_MODEL_MAX 32
@@ -82,7 +84,7 @@ enum {
 
 extern struct a2cfg g_cfg;
 extern uint8_t g_slot;
-extern char g_status[81];
+extern char g_status[32];
 extern char g_io80[80];
 extern uint8_t g_net_ok;
 extern char g_http_err[32];
@@ -156,7 +158,7 @@ int http_probe_tags(uint32_t addr, uint16_t port);
 
 /* Aux $4000-$BFFF: 32K POST + answer staging. Copy routines live in LC. */
 #define A2CHAT_AUX_POST_MAX 0x8000u
-#define A2CHAT_PROMPT_AUX   0x7F00u
+#define A2CHAT_PROMPT_AUX   0x5000u
 unsigned char aux_present(void);
 #ifndef A2CHAT_HOST
 unsigned char __fastcall__ p8_prefix(char *dst);

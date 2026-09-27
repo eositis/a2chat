@@ -28,28 +28,40 @@ static void put2(char *d, unsigned char v)
     d[1] = (char)('0' + v);
 }
 
+/* HH:MM:SS becomes HH:MM. "HH:MM AM" is left as the firmware wrote it. */
+static void wall_hm(void)
+{
+    if (g_wall[2] == ':' && g_wall[5] == ':') {
+        g_wall[5] = 0;
+    }
+}
+
 void clock_init(void)
 {
     unsigned char h, m;
 
     g_p8 = 0;
     g_mf = 0;
-    strcpy(g_wall, "--:--:--");
+    strcpy(g_wall, "--:--");
+    /* MegaFlash replaces the IIc/IIc+ ROM with a 4x or 5x image
+     * ($FBBF = $04 or $05). $FBC0 == 0 is the original IIc and never
+     * has MegaFlash. Skip IIe ($FBC0 = $E0): $C0C0 is W5100 there. */
     if (*(volatile unsigned char *)0xFBB3 == 6 &&
-        *(volatile unsigned char *)0xFBC0 == 0) {
-        g_mf = mf_present();
+        *(volatile unsigned char *)0xFBC0 != 0xE0) {
+        unsigned char rom = *(volatile unsigned char *)0xFBBF;
+        if (rom == 4 || rom == 5) {
+            g_mf = mf_present();
+        }
     }
-    if (p8_time(&h, &m)) {
+    if (g_mf && mf_timestr(g_wall)) {
+        g_wall[8] = 0;
+        wall_hm();
+    } else if (p8_time(&h, &m)) {
         g_p8 = 1;
         put2(g_wall, h);
         g_wall[2] = ':';
         put2(g_wall + 3, m);
-        g_wall[5] = ':';
-        g_wall[6] = '0';
-        g_wall[7] = '0';
-        g_wall[8] = 0;
-    } else if (g_mf && mf_timestr(g_wall)) {
-        g_wall[8] = 0;
+        g_wall[5] = 0;
     }
 #ifndef A2CHAT_HOST
     /* Clock-card IRQs are unsafe with cc65 LC. Mask them; IP65 is polled. */
@@ -60,22 +72,22 @@ void clock_init(void)
 
 uint8_t clock_kind(void)
 {
-    if (g_p8) {
-        return CLOCK_NSC;
-    }
     if (g_mf) {
         return CLOCK_MFMS;
+    }
+    if (g_p8) {
+        return CLOCK_NSC;
     }
     return CLOCK_JIFFY;
 }
 
 const char *clock_kind_name(void)
 {
-    if (g_p8) {
-        return "P8";
-    }
     if (g_mf) {
         return "MFMS";
+    }
+    if (g_p8) {
+        return "P8";
     }
     return "JIFFY";
 }
@@ -87,17 +99,19 @@ void clock_wall(char *dst, unsigned dstsz)
     if (!dstsz) {
         return;
     }
-    if (g_p8 && p8_time(&h, &m)) {
+    if (g_mf) {
+        if (mf_timestr(g_wall)) {
+            g_wall[8] = 0;
+            wall_hm();
+        }
+    } else if (g_p8 && p8_time(&h, &m)) {
         put2(g_wall, h);
         g_wall[2] = ':';
         put2(g_wall + 3, m);
-        g_wall[5] = ':';
-        g_wall[6] = '0';
-        g_wall[7] = '0';
-        g_wall[8] = 0;
+        g_wall[5] = 0;
     }
     if (!g_wall[0]) {
-        strcpy(g_wall, "--:--:--");
+        strcpy(g_wall, "--:--");
     }
     strncpy(dst, g_wall, dstsz - 1);
     dst[dstsz - 1] = 0;

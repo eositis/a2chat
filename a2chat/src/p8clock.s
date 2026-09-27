@@ -9,15 +9,17 @@
         .export         _p8_set_txt
         .import         popax
         .import         _g_io80
-        .import         eth_outp
+        .import         eth_inp
         .include        "zeropage.inc"
 
 ; Scratch in g_io80 (idle after fclose): P8 name, GET_FILE_INFO, SET_FILE_INFO.
 nmbuf   = _g_io80
 giparm  = _g_io80 + 16
 siparm  = _g_io80 + 40
-; FILEIO $BA00 is free when no file is open (NBUFS=1, closed before TCP).
-pfxzp   = eth_outp
+; Page-aligned, and not the file buffer at $BA00. A pathname
+; inside an open file buffer makes GET_PREFIX return $56.
+pfxbuf  = (eth_inp + $FF) & $FF00
+pfxzp   = pfxbuf + $41
 
 MACHID          = $BF98
 TIME_MIN        = $BF92
@@ -56,12 +58,19 @@ _p8_time:
         rts
 
 ; unsigned char __fastcall__ p8_prefix(char *dst)
-; GET_PREFIX ($C7) only. Save cc65 zp around MLI. Do not GET_TIME.
+; GET_PREFIX ($C7). The pathname buffer's first byte must be its
+; capacity or ProDOS returns an empty prefix. dst is only 48 bytes
+; (progdir), so the MLI buffer is private and the copy stops at 47.
+; Save cc65 zp around MLI. Do not GET_TIME.
 _p8_prefix:
         sta     pfxdst
         stx     pfxdst+1
+        lda     #<pfxbuf
         sta     pfxparm+1
-        stx     pfxparm+2
+        lda     #>pfxbuf
+        sta     pfxparm+2
+        lda     #64
+        sta     pfxbuf
         php
         sei
         cld
@@ -88,24 +97,23 @@ _p8_prefix:
         sta     ptr1+1
         lda     pfxerr
         bne     @pfail
+        lda     pfxbuf
+        bne     @slen0
+        jmp     @pfail
+@slen0: lda     pfxbuf
+        cmp     #48
+        bcc     @slen
+        lda     #47
+@slen:  sta     pfxn
         ldy     #0
-        lda     (ptr1),y
-        beq     @pfail
-        sta     pfxn
-        cmp     #63
-        bcc     @sl0
-        lda     #63
-        sta     pfxn
-@sl0:   ldy     #0
 @sl:    iny
-        lda     (ptr1),y
+        lda     pfxbuf,y
         and     #$7F
         dey
         sta     (ptr1),y
         iny
         cpy     pfxn
-        bcc     @sl
-        beq     @sl
+        bne     @sl
         lda     #0
         ldy     pfxn
         sta     (ptr1),y

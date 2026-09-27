@@ -4,6 +4,7 @@
         .export         _chat_copy_row
         .export         _chat_pack_row
         .export         _chat_unpack_row
+        .export         _line_put_front
         .import         popa
         .importzp       ptr1, ptr2, tmp1, tmp2, tmp4
 
@@ -150,3 +151,94 @@ _chat_unpack_row:
         sta     ptr2+1
         sta     PAGE2_OFF
         jmp     gather
+
+; void __fastcall__ line_put_front(char *s)
+; Rotate a "/load" token to the start of the line.
+; "query /load NAME" -> "/load NAME query"
+_line_put_front:
+        sta     ptr1
+        stx     ptr1+1
+        ldy     #0
+@scan:  lda     (ptr1),y
+        beq     @out
+        cmp     #'/'
+        bne     @adv
+        cpy     #0
+        beq     @edge
+        dey
+        lda     (ptr1),y
+        iny
+        cmp     #' '
+        bne     @adv
+@edge:  sty     tmp1
+        iny
+        lda     (ptr1),y
+        cmp     #'l'
+        bne     @back
+        iny
+        lda     (ptr1),y
+        cmp     #'o'
+        bne     @back
+        iny
+        lda     (ptr1),y
+        cmp     #'a'
+        bne     @back
+        iny
+        lda     (ptr1),y
+        cmp     #'d'
+        bne     @back
+        iny
+        lda     (ptr1),y
+        beq     @hit
+        cmp     #' '
+        beq     @hit
+@back:  ldy     tmp1
+@adv:   iny
+        bne     @scan
+@out:   rts
+@hit:   ldy     tmp1
+        beq     @out
+        ldy     #0
+@len:   lda     (ptr1),y
+        beq     @got
+        iny
+        bne     @len
+@got:   sty     tmp2
+        lda     tmp2
+        sec
+        sbc     tmp1
+        sta     tmp4
+@rot:   lda     tmp1
+        beq     @gap
+        ldy     #0
+        lda     (ptr1),y
+        tax
+@sl:    iny
+        lda     (ptr1),y
+        dey
+        sta     (ptr1),y
+        iny
+        cpy     tmp2
+        bne     @sl
+        ldy     tmp2
+        dey
+        txa
+        sta     (ptr1),y
+        dec     tmp1
+        jmp     @rot
+@gap:   ldy     tmp2
+        dey
+        dey
+@sh:    cpy     tmp4
+        bcc     @sp
+        lda     (ptr1),y
+        iny
+        sta     (ptr1),y
+        dey
+        dey
+        cpy     #$ff
+        bne     @sh
+@sp:    ldy     tmp4
+        lda     #' '
+        sta     (ptr1),y
+        rts

@@ -3,8 +3,9 @@
 ; during tcp_send so RX/TX are not the same RAM (send body Timeout).
 ;
         .export         iobuf_alloc, iobuf_free
+        .export         _iobuf_reclaim
         .export         eth_outp
-        .import         incsp2, popptr1
+        .import         incsp2, popptr1, fdtab, closedirect
         .include        "zeropage.inc"
         .include        "errno.inc"
 
@@ -47,15 +48,32 @@ found:  lda     #$FF
         ldx     #$00
         rts
 
+; NBUFS=1. A failed OPEN calls here with a bad pointer (MLI
+; clobbers the fd slot index), which used to skip the release
+; and leave `used` set. Every later fopen then returns ENOMEM.
 iobuf_free:
-        txa
-        sec
-        sbc     #>bufs
-        lsr
-        lsr
-        tax
-        cpx     #NBUFS
-        bcs     :+
         lda     #$00
-        sta     used,x
-:       rts
+        sta     used
+        rts
+
+; Drop any real ProDOS file (fd 3+) and clear the buffer flag.
+; The flag can stay set after a failed open, and then every fopen
+; returns ENOMEM before MLI runs.
+_iobuf_reclaim:
+        ldy     #12
+@lp:    lda     fdtab,y
+        beq     @nx
+        cmp     #$80
+        bcs     @nx
+        jsr     closedirect
+        lda     #$00
+        sta     fdtab,y
+@nx:    tya
+        clc
+        adc     #4
+        tay
+        cpy     #32
+        bcc     @lp
+        lda     #$00
+        sta     used
+        rts

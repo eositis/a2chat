@@ -2,7 +2,7 @@
 
 Native **ProDOS 8** chat client for an enhanced **Apple IIe** or **Apple IIc** with **Uthernet II** (WIZnet W5100). It talks **HTTP directly** to [Ollama](https://ollama.com) on the LAN, streams replies in 80-column text, and can save notes or listings onto a ProDOS volume.
 
-Current release: **version 1.1** (help row **29**).
+Current release: **version 1.1** (help row **38**).
 
 **Using it on the Apple:** [USERGUIDE.md](USERGUIDE.md) (hardware, disk install, config, commands, saving files, troubleshooting).
 
@@ -39,14 +39,15 @@ Host-side parser tests (no Apple II required):
 make host-test
 ```
 
-`make disk` rebuilds only the 140K image. `make hd` rebuilds the 8MB image. Both volumes are `/A2CHAT/` with `PRODOS`, `A2CHAT.SYSTEM` (cc65 loader), `A2CHAT` (BIN at `$0803`), sample `A2CHAT.CFG`, and sample `A2CHAT.TXT`. With no `BASIC.SYSTEM`, ProDOS starts `A2CHAT.SYSTEM` on boot. Restore your real `HOST` / `MODEL` / `PREFIX` (and your edited `A2CHAT.TXT`) after each image rebuild.
+`make disk` rebuilds only the 140K image. `make hd` rebuilds the 8MB image. Both volumes are `/A2CHAT/` with `PRODOS`, `A2CHAT.SYSTEM` (cc65 loader), `A2CHAT` (BIN at `$0803`), sample `A2CHAT.CFG`, `A2CHAT.TXT`, and `A2SOFT.TXT`. With no `BASIC.SYSTEM`, ProDOS starts `A2CHAT.SYSTEM` on boot. Restore your real `HOST` / `MODEL` / `PREFIX` (and your edited prompt files) after each image rebuild.
 
 Manual AppleCommander layout (wget65-style):
 
 - `A2CHAT.SYSTEM` — SYS loader
 - `A2CHAT` — BIN (`-as` AppleSingle from `a2chat.bin`)
 - `A2CHAT.CFG` — TXT
-- `A2CHAT.TXT` — TXT (system prompt)
+- `A2CHAT.TXT` — TXT (short system prompt)
+- `A2SOFT.TXT` — TXT (Applesoft reference)
 
 ## Ollama
 

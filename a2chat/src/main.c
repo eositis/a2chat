@@ -8,7 +8,9 @@
 
 static char pathbuf[A2CHAT_PATH_MAX];
 static char progdir[A2CHAT_PATH_MAX];
-static char line[A2CHAT_LINE_MAX];
+/* DHCP scratch, idle while a prompt is edited. Not the C stack. */
+extern char output_buffer[];
+void __fastcall__ line_put_front(char *s);
 
 char *self_path(const char *filename)
 {
@@ -56,7 +58,7 @@ int main(int argc, char *argv[])
     clock_init();
     ui_redraw_chrome();
     if (net_init(g_slot) != 0) {
-        ui_print("Continuing offline. Slash commands still work.");
+        ui_print("Offline");
         ui_nl();
     }
     ui_redraw_chrome();
@@ -64,10 +66,10 @@ int main(int argc, char *argv[])
         ui_print("Config: ");
         ui_print(g_cfg_loaded);
     } else {
-        ui_print("Config: A2CHAT.CFG not found, using defaults");
+        ui_print("Using defaults");
     }
     ui_nl();
-    ui_print("A2CHAT ready. Type a prompt or /help. /ping retests Ollama.");
+    ui_print("Ready");
     ui_nl();
     ui_print("Data ");
     ui_print(g_cfg.prefix[0] ? g_cfg.prefix : (progdir[0] ? progdir : "(cwd)"));
@@ -88,17 +90,19 @@ int main(int argc, char *argv[])
 #endif
 
     for (;;) {
-        ui_prompt(line, A2CHAT_LINE_MAX);
-        if (!line[0]) {
+        ui_prompt(output_buffer, A2CHAT_LINE_MAX);
+        if (!output_buffer[0]) {
             continue;
         }
-        if (line[0] == '/') {
-            if (cmd_handle(line) == 1) {
+        /* "query /load NAME" becomes "/load NAME query". */
+        line_put_front(output_buffer);
+        if (output_buffer[0] == '/') {
+            if (cmd_handle(output_buffer) == 1) {
                 break;
             }
             continue;
         }
-        ollama_send(line, 0);
+        ollama_send(output_buffer, 0);
     }
     net_shutdown();
     ui_exit();

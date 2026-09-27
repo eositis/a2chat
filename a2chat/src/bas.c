@@ -216,8 +216,75 @@ static int readline2(FILE *in, char *line, unsigned max)
     return 0;
 }
 
-static char line[128];
-static unsigned char tok[128];
+static char line[240];
+static unsigned char tok[240];
+
+/* 1 = wrote a program line, 0 = skipped, -1 = not a legal line. */
+static int emit_line(FILE *out, unsigned *addr)
+{
+    unsigned n = 0, lnum = 0, tn = 0, m;
+    unsigned char t;
+    uint8_t in_str = 0, rem = 0;
+    unsigned next;
+
+    while (line[n] == ' ' || line[n] == '\t') {
+        n++;
+    }
+    if (!line[n] || line[n] < '0' || line[n] > '9') {
+        return 0;
+    }
+    while (line[n] >= '0' && line[n] <= '9') {
+        lnum = lnum * 10u + (unsigned)(line[n] - '0');
+        n++;
+    }
+    if (lnum > 63999u) {
+        return -1;
+    }
+    while (line[n] == ' ' || line[n] == '\t') {
+        n++;
+    }
+    while (line[n]) {
+        if (tn + 1 >= sizeof(tok)) {
+            return -1;
+        }
+        if (rem || in_str) {
+            if (line[n] == '"' && in_str && !rem) {
+                in_str = 0;
+            }
+            tok[tn++] = (unsigned char)line[n++];
+            continue;
+        }
+        if (line[n] == '"') {
+            in_str = 1;
+            tok[tn++] = '"';
+            n++;
+            continue;
+        }
+        if (line[n] == '?') {
+            tok[tn++] = 0xBA;
+            n++;
+            continue;
+        }
+        if (match_kw(line + n, &m, &t)) {
+            tok[tn++] = t;
+            n += m;
+            if (t == 0xB2 || t == 0x83) {
+                rem = 1;
+            }
+            continue;
+        }
+        tok[tn++] = (unsigned char)line[n++];
+    }
+    next = *addr + 4 + tn + 1;
+    fputc((unsigned char)(next & 0xff), out);
+    fputc((unsigned char)(next >> 8), out);
+    fputc((unsigned char)(lnum & 0xff), out);
+    fputc((unsigned char)(lnum >> 8), out);
+    fwrite(tok, 1, tn, out);
+    fputc(0, out);
+    *addr = next;
+    return 1;
+}
 
 int bas_tokenize(FILE *in, FILE *out)
 {
@@ -226,71 +293,20 @@ int bas_tokenize(FILE *in, FILE *out)
 
     held = -2;
     while (readline2(in, line, sizeof(line)) == 0) {
-        unsigned n = 0, lnum = 0, tn = 0, m;
-        unsigned char t;
-        uint8_t in_str = 0, rem = 0;
-        unsigned next;
-
-        while (line[n] == ' ' || line[n] == '\t') {
-            n++;
-        }
-        if (!line[n] || line[n] < '0' || line[n] > '9') {
-            continue;
-        }
-        while (line[n] >= '0' && line[n] <= '9') {
-            lnum = lnum * 10 + (unsigned)(line[n] - '0');
-            n++;
-        }
-        if (lnum > 63999u) {
+        int e = emit_line(out, &addr);
+        if (e < 0) {
             return -1;
         }
-        while (line[n] == ' ' || line[n] == '\t') {
-            n++;
+        if (e) {
+            lines++;
         }
-        while (line[n] && tn < sizeof(tok) - 1) {
-            if (rem || in_str) {
-                if (line[n] == '"' && in_str && !rem) {
-                    in_str = 0;
-                }
-                tok[tn++] = (unsigned char)line[n++];
-                continue;
-            }
-            if (line[n] == '"') {
-                in_str = 1;
-                tok[tn++] = '"';
-                n++;
-                continue;
-            }
-            if (line[n] == '?') {
-                tok[tn++] = 0xBA;
-                n++;
-                continue;
-            }
-            if (match_kw(line + n, &m, &t)) {
-                tok[tn++] = t;
-                n += m;
-                if (t == 0xB2 || t == 0x83) {
-                    rem = 1;
-                }
-                continue;
-            }
-            tok[tn++] = (unsigned char)line[n++];
-        }
-        next = addr + 4 + tn + 1;
-        fputc((unsigned char)(next & 0xff), out);
-        fputc((unsigned char)(next >> 8), out);
-        fputc((unsigned char)(lnum & 0xff), out);
-        fputc((unsigned char)(lnum >> 8), out);
-        fwrite(tok, 1, tn, out);
-        fputc(0, out);
-        addr = next;
-        lines++;
     }
     fputc(0, out);
     fputc(0, out);
     return lines ? 0 : -1;
 }
 
+#ifdef A2CHAT_HOST
 static const unsigned char *kw_for_tok(unsigned char t)
 {
     const unsigned char *k = KW;
@@ -437,14 +453,4 @@ int bas_detokenize(FILE *in, FILE *out)
     return detok_stream(in);
 }
 
-#ifndef A2CHAT_HOST
-int bas_detokenize_aux(FILE *in, unsigned max, unsigned *got)
-{
-    g_out = 0;
-    g_max = max;
-    g_aux = 1;
-    detok_stream(in);
-    *got = g_got;
-    return 0;
-}
 #endif

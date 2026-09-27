@@ -21,7 +21,7 @@ CLR_RAMWRT      = $C004
 SET_RAMWRT      = $C005
 
         .bss
-zpsv:   .res    64
+zpsv:   .res    48
 
         .code
 
@@ -230,3 +230,4 @@ rpl:    lda     (ptr2),y
 rdone:  sta     CLR_RAMRD
         rts
 stub_len = * - stub_img
+.assert stub_len <= 48, error, "aux stub exceeds zpsv"

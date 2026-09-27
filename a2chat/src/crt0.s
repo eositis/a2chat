@@ -18,8 +18,6 @@
         txs
         sei
         cld
-        lda     #$B1
-        sta     $0400
         jsr     init
         jsr     zerobss
         jsr     setdos
@@ -60,16 +58,12 @@ setsp:  sta     sp
         ; lc_map() is for IP65 eth buffers after file I/O.
         sei
         cld
-        lda     #$B2
-        sta     $0401
         lda     #<$BF00
         sta     sp
         lda     #>$BF00
         sta     sp+1
         sei
         cld
-        lda     #$B3
-        sta     $0402
         rts
 
 ; cc65 callmli no-ops when __dos_type is 0 (initdostype skipped).

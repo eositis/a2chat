@@ -30,7 +30,7 @@ static uint8_t sb_count;
 static uint8_t sb_view;
 
 uint8_t g_slot;
-char g_status[81];
+char g_status[32];
 char g_io80[80];
 
 void ui_clear_chat(void);
@@ -271,14 +271,14 @@ void ui_set_perf(const char *s)
     if (!s || !s[0]) {
         return;
     }
-    strncpy(g_status, s, 80);
-    g_status[80] = 0;
+    strncpy(g_status, s, 31);
+    g_status[31] = 0;
     have_perf = 1;
 }
 
 static void help_row(void)
 {
-    const char *h = "/config /ping /cat /new /model /quit /about";
+    const char *h = "/config /ping /cat /load /save /new /model /quit /about";
     char t[10];
     unsigned char col;
     unsigned n;
@@ -365,8 +365,8 @@ void ui_clear_chat(void)
 
 void ui_status(const char *msg)
 {
-    strncpy(g_status, msg, 80);
-    g_status[80] = 0;
+    strncpy(g_status, msg, 31);
+    g_status[31] = 0;
     gotoxy(0, CHROME_TOP);
     revers(1);
     cputs(g_status);

@@ -36,12 +36,27 @@ mf_wait:
         rts
 
 ; unsigned char mf_present(void)
-; Only the ID toggle. Do not write $C0C0 here: on a slot-4 Uthernet II
-; without MegaFlash that location is the W5100 mode register.
+; CMD_GETDEVINFO signature $88,$74 (firmware chkmegaflashex).
+; Two back-to-back reads of $C0C3 XOR to 0 on the Pico bus: the FIFO
+; still holds the pre-toggle byte, so the ID toggle never sees MegaFlash.
+; Caller must already know this is a ROM 4/5 IIc. $C0C0 is MegaFlash
+; there; W5100 mode is $C0C4.
 _mf_present:
-        lda     idreg
-        eor     idreg
-        inc     a
+        lda     #CMD_GETDEVINFO
+        sta     cmdreg
+        ldx     #0
+:       bit     cmdreg
+        bpl     @idle
+        dex
+        bne     :-
+        beq     @no
+@idle:  bit     cmdreg
+        bvs     @no
+        lda     paramreg
+        cmp     #$88
+        bne     @no
+        lda     paramreg
+        cmp     #$74
         bne     @no
         lda     #1
         ldx     #0
