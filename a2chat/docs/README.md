@@ -31,7 +31,7 @@ cd a2chat
 make
 ```
 
-That builds IP65’s `ip65_tcp.lib` + `ip65_apple2_uther2.lib` if needed, then `a2chat.bin`, copies cc65 `loader.system` to `A2CHAT.SYSTEM`, and writes **`a2chat.po`** (140K) and **`a2chat.hdv`** (8MB). HTTP uses the same software TCP path as telnet65 (`tcp_connect` / `ip65_process`), not wget65’s W5100 on-chip TCP. Timer, ICMP, TX/RX buffers, and TCP window 900 are **A2CHAT objects** linked ahead of those libs; the IP65 tree is not patched.
+That builds IP65’s `ip65_tcp.lib` + `ip65_apple2_uther2.lib` if needed, then `a2chat.bin`, copies cc65 `loader.system` to `A2CHAT.SYSTEM`, and writes **`a2chat.po`** (140K) and **`a2chat.hdv`** (8MB). DHCP and a static address still use IP65 MACRAW. After the address is set, HTTP uses the W5100’s hardware TCP socket. The IP65 TCP engine is not linked. Timer, ICMP, and the Ethernet buffers are **A2CHAT objects** linked ahead of those libs; the IP65 tree is not patched.
 
 Host-side parser tests (no Apple II required):
 
@@ -78,7 +78,7 @@ Set `PORT=40114` (or `/config`) and keep `HOST=` as the machine running Olla. Op
 | `HOST` | Ollama IPv4 |
 | `PORT` | `11434` Ollama, or `40114` Olla (`/olla/ollama/api/...`) |
 | `MODEL` | model name |
-| `SLOT` | `0` = auto; `4` MegaFlash IIc; `3` typical IIe |
+| `SLOT` | `0` = auto (IIc and IIgs try slot 4, IIe tries slot 3); or a slot number 1–7 |
 | `IP` / `GATEWAY` / `NETMASK` | empty = DHCP (IP65); filled = static |
 | `PREFIX` | data directory for `A2CHAT.LOG` and default for `/cat` (e.g. `/A2.DESKTOP/A2CHAT`). Empty = folder the program was launched from. |
 | `MAXHIST` | bytes of log spliced into each POST |
@@ -96,4 +96,4 @@ Use a static `IP=` on the same subnet as the emulator NIC if DHCP is awkward.
 
 ## License notes
 
-Link against your local IP65 tree rather than a random snapshot. `src/w5100.c` / `w5100.h` are unused copies of Oliver Schmidt’s wget65 HAL (kept for reference).
+Link against your local IP65 tree rather than a random snapshot. `src/w5100.c` is the hardware TCP driver used after DHCP. `src/tcp_stub.s` replaces the IP65 TCP engine so the binary still fits.

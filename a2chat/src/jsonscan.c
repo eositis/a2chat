@@ -252,17 +252,65 @@ void jsonscan_feed(struct jsonscan *j, char ch)
 #endif
 }
 
+/* Match position across receive windows. Reset in jsonscan_init. */
+static uint8_t keypos;
+static uint8_t evalpos;
+
+static const char key_content[] = "\"content\":\"";
+static const char key_eval[] = "\"eval_count\":";
+
 void jsonscan_feed_buf(struct jsonscan *j, const char *p, unsigned n)
 {
     unsigned i = 0;
 
     while (i < n) {
+        /* Ordinary JSON bytes are not letters on the screen. Match the
+         * content key with a counter instead of the per-byte C scanner. */
+        if (j->mode == JS_SEEK) {
+            char c = p[i++];
+
+            if (c == key_content[keypos]) {
+                keypos++;
+                if (keypos == 11) {
+                    j->mode = j->seen_arguments ? JS_ARG_CONTENT : JS_MSG_CONTENT;
+                    j->escape = 0;
+                    keypos = 0;
+                }
+            } else {
+                keypos = (c == '"') ? 1 : 0;
+            }
+            if (c == key_eval[evalpos]) {
+                evalpos++;
+                if (evalpos == 13) {
+                    j->mode = JS_NUM_EVAL;
+                    j->numlen = 0;
+                    evalpos = 0;
+                }
+            } else {
+                evalpos = (c == '"') ? 1 : 0;
+            }
+            continue;
+        }
+        if (j->mode == JS_NUM_EVAL) {
+            char c = p[i];
+
+            if (c == ' ') {
+                i++;
+                continue;
+            }
+            if (c >= '0' && c <= '9' && j->numlen < 7) {
+                j->numbuf[j->numlen++] = c;
+                i++;
+                continue;
+            }
+            end_num(j);
+            continue;
+        }
         if (j->mode == JS_MSG_CONTENT && !j->escape && !j->unicode_n) {
             unsigned k = 0;
-            unsigned left = n - i;
             const char *q = p + i;
 
-            while (k < left) {
+            while (i + k < n) {
                 char c = q[k];
                 if (c == '"' || c == '\\') {
                     break;
@@ -270,13 +318,10 @@ void jsonscan_feed_buf(struct jsonscan *j, const char *p, unsigned n)
                 k++;
             }
             if (k) {
-                unsigned t;
-                for (t = 0; t < k; t++) {
-                    win_add(j, q[t]);
-                }
                 if (j->on_span) {
                     j->on_span(q, k, j->user);
                 } else {
+                    unsigned t;
                     for (t = 0; t < k; t++) {
                         emit_content(j, q[t]);
                     }
@@ -293,6 +338,8 @@ void jsonscan_feed_buf(struct jsonscan *j, const char *p, unsigned n)
 void jsonscan_init(struct jsonscan *j)
 {
     memset(j, 0, sizeof(*j));
+    keypos = 0;
+    evalpos = 0;
 }
 
 void jsonscan_on_byte(char ch, void *user)

@@ -6,11 +6,11 @@
 #include <stdio.h>
 #include <stddef.h>
 
-#define A2CHAT_BUILD 64
-#define A2CHAT_BUILD_STR "64"
-#define A2CHAT_VERSION "1.2"
+#define A2CHAT_BUILD 69
+#define A2CHAT_BUILD_STR "69"
+#define A2CHAT_VERSION "1.3"
 /* About date. Change this whenever A2CHAT_BUILD changes. */
-#define A2CHAT_DATE "27 September 2026"
+#define A2CHAT_DATE "8 October 2026"
 #define A2CHAT_OLLA_PORT 40114u
 #define A2CHAT_PROMPT_MAX 0x2800u
 #define A2CHAT_PATH_MAX 48

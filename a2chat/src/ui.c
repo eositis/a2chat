@@ -28,6 +28,8 @@ static uint8_t have_perf;
 static uint8_t sb_head;
 static uint8_t sb_count;
 static uint8_t sb_view;
+static char clock_shown[9];
+static uint16_t clock_jiffy;
 
 uint8_t g_slot;
 char g_status[32];
@@ -38,6 +40,8 @@ void ui_clear_chat(void);
 void __fastcall__ chat_copy_row(uint8_t dst, uint8_t src);
 void __fastcall__ chat_pack_row(uint8_t row, unsigned char *dst);
 void __fastcall__ chat_unpack_row(uint8_t row, const unsigned char *src);
+void __fastcall__ chat_write(uint8_t col, uint8_t row, const char *s, uint8_t n);
+uint16_t timer_jiffy(void);
 
 static unsigned text_base(uint8_t row)
 {
@@ -67,6 +71,10 @@ static void chat_blit(uint8_t col, uint8_t row, const char *s, uint8_t n,
     uint8_t i;
 
     if (!n) {
+        return;
+    }
+    if (!inverse) {
+        chat_write(col, row, s, n);
         return;
     }
     base = text_base(row);
@@ -252,10 +260,46 @@ static void sb_page(int dir)
     }
 }
 
+static void paint_clock(const char *t)
+{
+    unsigned char col;
+    unsigned n;
+
+    n = (unsigned)strlen(t) + 2u + (unsigned)strlen(A2CHAT_BUILD_STR);
+    col = (unsigned char)(80u - n);
+    gotoxy(col, HELP_ROW);
+    revers(1);
+    cputs(t);
+    cputc(' ');
+    cputc('B');
+    cputs(A2CHAT_BUILD_STR);
+    revers(0);
+}
+
+static void clock_on_line(void)
+{
+    char t[10];
+    uint16_t now;
+
+    now = timer_jiffy();
+    if (clock_shown[0] && (uint16_t)(now - clock_jiffy) < 50000u) {
+        return;
+    }
+    clock_jiffy = now;
+    clock_wall(t, sizeof t);
+    if (!strcmp(t, clock_shown)) {
+        return;
+    }
+    strncpy(clock_shown, t, sizeof(clock_shown) - 1);
+    clock_shown[sizeof(clock_shown) - 1] = 0;
+    paint_clock(clock_shown);
+}
+
 static void chat_row_done(void)
 {
     sb_pin_tail();
     sb_push_row(chat_y);
+    clock_on_line();
     if (chat_y < CHAT_BOT) {
         chat_y++;
     } else {
@@ -284,6 +328,9 @@ static void help_row(void)
     unsigned n;
 
     clock_wall(t, sizeof t);
+    strncpy(clock_shown, t, sizeof(clock_shown) - 1);
+    clock_shown[sizeof(clock_shown) - 1] = 0;
+    clock_jiffy = timer_jiffy();
     n = (unsigned)strlen(t) + 2u + (unsigned)strlen(A2CHAT_BUILD_STR);
     col = (unsigned char)(80u - n);
     gotoxy(0, HELP_ROW);

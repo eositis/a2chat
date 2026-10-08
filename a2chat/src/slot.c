@@ -22,26 +22,14 @@ static int w5100_present(uint8_t slot)
     data = mode + 3;
 
     saved = *mode;
-    *mode = 0x80; /* software reset */
     *mode = 0x03; /* indirect + auto increment */
     *addr_hi = 0x00;
-    *addr_lo = 0x01; /* GAR */
-    *data = 0xA5;
-    *data = 0x5A;
-    *data = 0x00;
-    *data = 0x01;
-    *addr_hi = 0x00;
-    *addr_lo = 0x01;
+    *addr_lo = 0x17; /* RTR, power-on value 0x07D0 */
+    (void)*addr_lo;
     a = *data;
     b = *data;
-    *addr_hi = 0x00;
-    *addr_lo = 0x01;
-    *data = 0;
-    *data = 0;
-    *data = 0;
-    *data = 0;
     *mode = saved;
-    return (a == 0xA5 && b == 0x5A);
+    return (a == 0x07 && b == 0xD0);
 }
 
 uint8_t slot_resolve(uint8_t configured)
@@ -54,7 +42,9 @@ uint8_t slot_resolve(uint8_t configured)
         return configured;
     }
     ost = get_ostype();
-    if (ost >= APPLE_IIC && ost < APPLE_IIGS) {
+    /* IIc MegaFlash and a IIgs Uthernet II are both usually slot 4.
+     * An enhanced IIe still tries slot 3 first. */
+    if (ost == APPLE_IIGS || (ost >= APPLE_IIC && ost < APPLE_IIGS)) {
         prefer = 4;
     } else {
         prefer = 3;

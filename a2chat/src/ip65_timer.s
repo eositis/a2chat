@@ -4,6 +4,8 @@
 ;
         .export         timer_init
         .export         timer_read
+        .export         timer_jiffy
+        .export         _timer_jiffy
         .export         timer_seconds
         .import         _mf_present
         .import         _mf_get_ms
@@ -48,10 +50,13 @@ timer_init:
 
 timer_read:
         lda     use_mf
-        beq     @vbl
+        beq     timer_jiffy
         jmp     _mf_get_ms
 
-@vbl:   lda     RDVBLBAR
+; Vertical-blank counter only. About 1 ms per count. No MegaFlash.
+timer_jiffy:
+_timer_jiffy:
+        lda     RDVBLBAR
         tax
         eor     last_vbl
         stx     last_vbl
