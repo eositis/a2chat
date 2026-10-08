@@ -67,6 +67,9 @@ static void set_addr(uint16_t addr)
 {
   *w5100_addr_hi = addr >> 8;
   *w5100_addr_lo = addr;
+  /* Real W5100 and gssquared need the address latched before data.
+   * Reading the address port does not auto-increment. */
+  (void)*w5100_addr_lo;
 }
 
 static uint8_t get_byte(uint16_t addr)
@@ -92,20 +95,45 @@ static uint16_t get_word(uint16_t addr)
 
 static void set_word(uint16_t addr, uint16_t data)
 {
-  set_addr(addr);
-
-  *w5100_data = data >> 8;
-  *w5100_data = data;
+  /* One address setup per byte. Auto-increment is not required. */
+  set_byte(addr, data >> 8);
+  set_byte(addr + 1, data);
 }
 
 static void set_quad(uint16_t addr, uint32_t data)
 {
-  set_addr(addr);
+  set_byte(addr, data);
+  set_byte(addr + 1, data >> 8);
+  set_byte(addr + 2, data >> 16);
+  set_byte(addr + 3, data >> 24);
+}
 
-  *w5100_data = data;
-  *w5100_data = data >> 8;
-  *w5100_data = data >> 16;
-  *w5100_data = data >> 24;
+/* Sn_CR reads 0 only after the W5100 has accepted the command.
+ * Writing the next command while it is nonzero is ignored. */
+static bool wait_cr(void)
+{
+  uint16_t spins = 0;
+
+  while (get_byte(SOCK_REG(0x01)) != 0) {
+    if (input_check_for_abort_key()) {
+      return false;
+    }
+    if (++spins == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static uint8_t sock_sr(void)
+{
+  uint8_t a = get_byte(SOCK_REG(0x03));
+  uint8_t b = get_byte(SOCK_REG(0x03));
+
+  if (a != b) {
+    b = get_byte(SOCK_REG(0x03));
+  }
+  return b;
 }
 
 bool w5100_init(uint8_t eth_init)
@@ -127,8 +155,34 @@ void w5100_config(void)
 {
 #ifdef SINGLE_SOCKET
 
-  // IP65 is inhibited so disable the W5100 Ping Block Mode.
-  *w5100_mode &= ~0x10;
+  /* Write the mode bits. A read-modify-write drops indirect mode and
+   * auto-increment when the mode register does not read back. MegaFlash
+   * latches the value; a real W5100 and gssquared do not. */
+  *w5100_mode = 0x03;
+
+  /* IP65 left socket 0 in MACRAW. Memory size changes only while it
+   * is closed, and only after Sn_CR returns to 0. */
+  if (wait_cr()) {
+    uint16_t spins = 0;
+    uint8_t mac_i;
+
+    set_byte(SOCK_REG(0x01), 0x10);
+    while (sock_sr() != 0x00 && spins != 0xFFFF) {
+      if (input_check_for_abort_key()) {
+        break;
+      }
+      spins++;
+    }
+    wait_cr();
+
+    /* One connect attempt is about 30 seconds: 200ms * (149+1). */
+    set_word(0x0017, 0x07D0);
+    set_byte(0x0019, 149);
+
+    for (mac_i = 0; mac_i < 6; mac_i++) {
+      set_byte(0x0009 + mac_i, cfg_mac[mac_i]);
+    }
+  }
 
 #endif // SINGLE_SOCKET
 
@@ -181,22 +235,43 @@ void w5100_config(void)
 
 static bool w5100_connect(uint16_t port)
 {
+  uint16_t sport = ip65_random_word();
+  uint8_t sr;
+
+  /* Port 0 is illegal on a real W5100. Keep the value in the dynamic range. */
+  if (sport < 1024) {
+    sport = (uint16_t)(49152u + (sport & 0x3FFFu));
+  }
+
   // Socket x Source Port Register
-  set_word(SOCK_REG(0x04), ip65_random_word());
+  set_word(SOCK_REG(0x04), sport);
 
   // Socket x Destination Port Register
   set_word(SOCK_REG(0x10), port);
 
+  if (!wait_cr()) {
+    return false;
+  }
+
   // Socket x Command Register: OPEN
   set_byte(SOCK_REG(0x01), 0x01);
 
-  // Socket x Status Register: SOCK_INIT ?
-  while (get_byte(SOCK_REG(0x03)) != 0x13)
+  while (true)
   {
-    if (input_check_for_abort_key())
-    {
+    if (input_check_for_abort_key() || !wait_cr()) {
       return false;
     }
+    sr = sock_sr();
+    if (sr == 0x13) {
+      break; // SOCK_INIT
+    }
+    if (sr == 0x00) {
+      return false; // OPEN rejected
+    }
+  }
+
+  if (!wait_cr()) {
+    return false;
   }
 
   // Socket x Command Register: CONNECT
@@ -204,16 +279,16 @@ static bool w5100_connect(uint16_t port)
 
   while (true)
   {
-    // Socket x Status Register
-    switch (get_byte(SOCK_REG(0x03)))
-    {
-      case 0x00: return false; // Socket Status: SOCK_CLOSED
-      case 0x17: return true;  // Socket Status: SOCK_ESTABLISHED
-    }
-
-    if (input_check_for_abort_key())
-    {
+    if (input_check_for_abort_key()) {
       return false;
+    }
+    sr = sock_sr();
+    if (sr == 0x17) {
+      return true; // SOCK_ESTABLISHED
+    }
+    /* A stale data-port read is 0 while Sn_CR is still busy. */
+    if (sr == 0x00 && get_byte(SOCK_REG(0x01)) == 0) {
+      return false; // SOCK_CLOSED
     }
   }
 }

@@ -4,9 +4,11 @@
         .export         _chat_copy_row
         .export         _chat_pack_row
         .export         _chat_unpack_row
+        .export         _chat_write
         .export         _line_put_front
         .import         popa
-        .importzp       ptr1, ptr2, tmp1, tmp2, tmp4
+        .import         popax
+        .importzp       ptr1, ptr2, tmp1, tmp2, tmp3, tmp4
 
 STORE80_ON      = $C001
 PAGE2_OFF       = $C054
@@ -73,6 +75,64 @@ _chat_copy_row:
         jsr     copy40
         sta     PAGE2_OFF
         jmp     copy40
+
+; void __fastcall__ chat_write(uint8_t col, uint8_t row, const char *s, uint8_t n)
+; Normal text only. Even columns, then odd columns.
+_chat_write:
+        pha
+        jsr     popax
+        sta     ptr2
+        stx     ptr2+1
+        jsr     popa
+        pha
+        jsr     popa
+        sta     tmp3
+        pla
+        jsr     text_base
+        pla
+        beq     @none
+        sta     tmp1
+        lda     #0
+        sta     tmp4
+        sta     STORE80_ON
+        sta     PAGE2_ON
+        jsr     wrpass
+        sta     PAGE2_OFF
+        lda     #1
+        sta     tmp4
+        jsr     wrpass
+@none:  rts
+
+; tmp1 = n, tmp3 = col, tmp4 = parity (0 even, 1 odd)
+; ptr1 = row base, ptr2 = source. tmp2 holds the column offset.
+wrpass:
+        ldy     #0
+@lp:    cpy     tmp1
+        bcs     @out
+        tya
+        clc
+        adc     tmp3
+        and     #1
+        cmp     tmp4
+        bne     @next
+        tya
+        clc
+        adc     tmp3
+        lsr     a
+        sta     tmp2
+        lda     (ptr2),y
+        and     #$7f
+        cmp     #32
+        bcs     @glyph
+        lda     #' '
+@glyph: ora     #$80
+        phy
+        ldy     tmp2
+        sta     (ptr1),y
+        ply
+@next:  iny
+        jmp     @lp
+@out:   rts
 
 scatter:
         ldy     #0

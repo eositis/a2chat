@@ -1,19 +1,19 @@
 /******************************************************************************
- * HTTP/1.0 over IP65 software TCP (same path as telnet65 / test/tcp.c).
- * wget65's W5100 on-chip TCP is not used: w5100_config() leaves MACRAW,
- * which is what IP65 needs for tcp_connect.
+ * HTTP/1.0 over the W5100 TCP socket. IP65 is used only before
+ * w5100_config() (DHCP / static address). Do not call ip65_process here.
  ******************************************************************************/
 
 #pragma static-locals (on)
+#pragma optimize (on)
 
 #include "a2chat.h"
+#include "w5100.h"
 #include <ip65.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
 
-#define TCP_MAX 900
 #define BOUNCE 216
 
 static char pkt[216];
@@ -116,20 +116,15 @@ static void feed_body(char ch)
 }
 
 static uint16_t rx_last;
+static char rxwin[64];
 
-static void __fastcall__ on_tcp(const uint8_t *buf, int16_t len)
+uint16_t timer_jiffy(void);
+
+static int connect_30(uint32_t addr, uint16_t port);
+
+static void feed_byte(char ch)
 {
-    uint16_t i;
-
-    rx_last = timer_read();
-    if (len < 0) {
-        rx_eof = 1;
-        return;
-    }
-    i = 0;
-    while (i < (uint16_t)len && !rx_have_hdr) {
-        char ch = (char)buf[i++];
-
+    if (!rx_have_hdr) {
         if (rx_hlen < sizeof(rx_hdr) - 1) {
             rx_hdr[rx_hlen++] = ch;
             rx_hdr[rx_hlen] = 0;
@@ -149,17 +144,56 @@ static void __fastcall__ on_tcp(const uint8_t *buf, int16_t len)
             }
             rx_have_hdr = 1;
         }
+        return;
     }
-    if (rx_have_hdr && i < (uint16_t)len) {
-        if (!rx_chunked && rx_on_bytes) {
-            rx_on_bytes((const char *)buf + i, (unsigned)((uint16_t)len - i),
-                        rx_user);
-        } else {
-            while (i < (uint16_t)len) {
-                feed_body((char)buf[i++]);
-            }
+    if (!rx_chunked && rx_on_bytes) {
+        rx_on_bytes(&ch, 1, rx_user);
+        return;
+    }
+    feed_body(ch);
+}
+
+static uint8_t pump_rx(void)
+{
+    volatile uint8_t *data = w5100_data;
+    uint16_t n;
+    uint16_t i;
+    uint16_t filled;
+
+    n = w5100_receive_request();
+    if (!n) {
+        if (!w5100_connected()) {
+            rx_eof = 1;
         }
+        return 0;
     }
+    i = 0;
+    while (i < n && !rx_have_hdr) {
+        feed_byte((char)*data);
+        i++;
+    }
+    if (rx_chunked || !rx_on_bytes) {
+        while (i < n) {
+            feed_byte((char)*data);
+            i++;
+        }
+        w5100_receive_commit(n);
+        return 1;
+    }
+    filled = 0;
+    while (i < n) {
+        if (filled == sizeof(rxwin)) {
+            rx_on_bytes(rxwin, filled, rx_user);
+            filled = 0;
+        }
+        rxwin[filled++] = (char)*data;
+        i++;
+    }
+    w5100_receive_commit(n);
+    if (filled) {
+        rx_on_bytes(rxwin, (unsigned)filled, rx_user);
+    }
+    return 1;
 }
 
 static void rx_reset(void (*on_bytes)(const char *p, unsigned n, void *user),
@@ -184,31 +218,34 @@ static void rx_reset(void (*on_bytes)(const char *p, unsigned n, void *user),
     }
 }
 
-static void send_fail(const char *what)
-{
-    strncpy(g_http_err, what, sizeof(g_http_err) - 1);
-    g_http_err[sizeof(g_http_err) - 1] = 0;
-    if (strlen(g_http_err) + 2 < sizeof(g_http_err)) {
-        strncat(g_http_err, " ", sizeof(g_http_err) - strlen(g_http_err) - 1);
-        strncat(g_http_err, ip65_strerror(ip65_error),
-                sizeof(g_http_err) - strlen(g_http_err) - 1);
-    }
-}
-
 static int send_all(const uint8_t *p, uint16_t len)
 {
-    /* tcp_send already waits for ACK and closes on failure; do not retry. */
+    volatile uint8_t *data = w5100_data;
+
     while (len) {
-        uint16_t n = len > TCP_MAX ? TCP_MAX : len;
+        uint16_t snd;
+        uint16_t i;
+
         if (ui_aborted()) {
+            w5100_disconnect();
             return -1;
         }
-        if (tcp_send(p, n)) {
-            return -1;
+        snd = w5100_send_request();
+        if (!snd) {
+            if (!w5100_connected()) {
+                return -1;
+            }
+            continue;
         }
-        p += n;
-        len -= n;
-        ip65_process();
+        if (snd > len) {
+            snd = len;
+        }
+        for (i = 0; i < snd; i++) {
+            *data = p[i];
+        }
+        p += snd;
+        len = (uint16_t)(len - snd);
+        w5100_send_commit(snd);
     }
     return 0;
 }
@@ -217,22 +254,16 @@ static int send_aux(uint16_t off, uint16_t total)
 {
     while (off < total) {
         uint16_t n = (uint16_t)(total - off);
+
         if (n > BOUNCE) {
             n = BOUNCE;
         }
-        if (n > TCP_MAX) {
-            n = TCP_MAX;
-        }
         aux_read(off, bounce, n);
         aux_mainbank();
-        if (ui_aborted()) {
+        if (send_all(bounce, n) != 0) {
             return -1;
         }
-        if (tcp_send(bounce, n)) {
-            return -1;
-        }
-        off += n;
-        ip65_process();
+        off = (uint16_t)(off + n);
     }
     return 0;
 }
@@ -244,22 +275,23 @@ static int send_str(const char *s)
 
 static int wait_done(void)
 {
-    rx_last = timer_read();
+    rx_last = timer_jiffy();
     while (!rx_eof) {
         if (ui_aborted()) {
-            tcp_close();
+            w5100_disconnect();
             strcpy(g_http_err, "recv aborted");
             return -1;
         }
-        /* ~20s with no TCP payload: Ollama hung or never closed. */
-        if ((uint16_t)(timer_read() - rx_last) > 45000u) {
-            tcp_close();
+        if (pump_rx()) {
+            rx_last = timer_jiffy();
+        } else if ((uint16_t)(timer_jiffy() - rx_last) > 20000u) {
+            /* ~20s of vertical blanks with no TCP payload. */
+            w5100_disconnect();
             strcpy(g_http_err, "recv timeout");
             return -1;
         }
-        ip65_process();
     }
-    tcp_close();
+    w5100_disconnect();
     return 0;
 }
 
@@ -311,36 +343,22 @@ int http_post_aux(uint32_t addr, uint16_t port, const char *url_path,
     }
 
     rx_reset(on_bytes, user, 0, 0);
-    {
-        uint8_t tries;
-
-        for (tries = 0; tries < 3; tries++) {
-            aux_mainbank();
-            if (tcp_connect(addr, port, on_tcp)) {
-                send_fail("TCP connect");
-                return -1;
-            }
-            ui_status(url_path);
-            if (send_str(hdr) != 0) {
-                tcp_close();
-                if (tries == 2) {
-                    send_fail("send hdr");
-                    return -1;
-                }
-                continue;
-            }
-            if (send_aux(0, json_len) != 0) {
-                tcp_close();
-                if (tries == 2) {
-                    send_fail("send aux");
-                    return -1;
-                }
-                continue;
-            }
-            clock_reset_ms();
-            break;
-        }
+    aux_mainbank();
+    if (connect_30(addr, port)) {
+        return -1;
     }
+    ui_status(url_path);
+    if (send_str(hdr) != 0) {
+        w5100_disconnect();
+        strcpy(g_http_err, "send hdr");
+        return -1;
+    }
+    if (send_aux(0, json_len) != 0) {
+        w5100_disconnect();
+        strcpy(g_http_err, "send aux");
+        return -1;
+    }
+    clock_reset_ms();
     if (wait_done() < 0) {
         return -1;
     }
@@ -351,35 +369,21 @@ int http_post_aux(uint32_t addr, uint16_t port, const char *url_path,
     return rc;
 }
 
-/* ip65 gives up after about 7 seconds. Four tries is the 30 second budget. */
-static int connect_window(uint32_t addr, uint16_t port)
-{
-    uint8_t i;
-
-    for (i = 0; i < 4; i++) {
-        if (ui_aborted()) {
-            strcpy(g_http_err, "recv aborted");
-            return -1;
-        }
-        if (!tcp_connect(addr, port, on_tcp)) {
-            return 0;
-        }
-    }
-    return -1;
-}
-
+/* W5100 RCR makes one connect about 30 seconds. Two retries after that. */
 static int connect_30(uint32_t addr, uint16_t port)
 {
     uint8_t try;
 
     for (try = 0; try < 3; try++) {
-        ui_status(try ? "Retry connect..." : "Connecting...");
-        if (!connect_window(addr, port)) {
-            return 0;
-        }
-        if (g_http_err[0]) {
+        if (ui_aborted()) {
+            strcpy(g_http_err, "recv aborted");
             return -1;
         }
+        ui_status(try ? "Retry connect..." : "Connecting...");
+        if (w5100_connect_addr(addr, port)) {
+            return 0;
+        }
+        w5100_disconnect();
     }
     strcpy(g_http_err, "TCP connect failed");
     return -1;
@@ -400,7 +404,7 @@ int http_probe_tags(uint32_t addr, uint16_t port)
             cfg_api_path(&g_cfg, "/api/tags"), g_cfg.host, (unsigned)port);
     ui_status(cfg_api_path(&g_cfg, "/api/tags"));
     if (send_str(hdr) < 0) {
-        tcp_close();
+        w5100_disconnect();
         strcpy(g_http_err, "TCP up, send failed");
         return -1;
     }

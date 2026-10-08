@@ -1,4 +1,5 @@
 #include "a2chat.h"
+#include "w5100.h"
 #include <ip65.h>
 #include <string.h>
 #include <stdio.h>
@@ -17,8 +18,9 @@ int net_init(uint8_t slot)
         return -1;
     }
     abort_key = 0x83;
-    /* Stay in IP65 MACRAW. Do not call w5100_config() — that switches the
-     * chip to on-chip TCP and breaks telnet65-style tcp_connect. */
+    /* DHCP and static address still use IP65 MACRAW. w5100_config()
+     * switches the chip to one 8KB/8KB TCP socket. Do not call
+     * ip65_process or tcp_* after that. */
     if (g_cfg.ip[0]) {
         cfg_ip = parse_dotted_quad(g_cfg.ip);
         if (g_cfg.netmask[0]) {
@@ -41,6 +43,8 @@ int net_init(uint8_t slot)
             return -1;
         }
     }
+    w5100_init(slot);
+    w5100_config();
     g_net_ok = 1;
     {
         char msg[81];
@@ -74,6 +78,8 @@ void net_diag_ollama(void)
 
 void net_shutdown(void)
 {
-    tcp_close();
+    if (g_net_ok) {
+        w5100_disconnect();
+    }
     g_net_ok = 0;
 }

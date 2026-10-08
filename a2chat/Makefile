@@ -1,7 +1,7 @@
 # A2CHAT — Apple IIe/IIc Ollama client (ProDOS 8 + Uthernet II)
 IP65 ?= /Users/eositis/Documents/GitHub/ip65
 CC65 = cl65
-CFLAGS = -Or -t apple2enh -C cfg/apple2enh-a2chat.cfg -I$(IP65)/inc -Isrc
+CFLAGS = -Or -t apple2enh -C cfg/apple2enh-a2chat.cfg -I$(IP65)/inc -Isrc -DSINGLE_SOCKET
 IP65LIB = $(IP65)/ip65/ip65_tcp.lib
 A2DRV = $(IP65)/drivers/ip65_apple2_uther2.lib
 LOADER = $(shell cl65 --print-target-path)/apple2enh/util/loader.system
@@ -23,6 +23,7 @@ SRCS = \
 	src/prodos.c \
 	src/net.c \
 	src/http65.c \
+	src/w5100.c \
 	src/ollama.c \
 	src/clock.c
 
@@ -37,7 +38,7 @@ ASM = \
 	src/close.s
 
 IP65OVR = \
-	build/tcp.o \
+	build/tcp_stub.o \
 	build/ip65_timer.o \
 	build/ip65_icmp.o \
 	build/ip65_error.o \
@@ -53,6 +54,10 @@ all: ip65 a2chat.bin A2CHAT.SYSTEM disk hd
 ip65:
 	$(MAKE) -C $(IP65)/ip65 ip65_tcp.lib
 	$(MAKE) -C $(IP65)/drivers ip65_apple2_uther2.lib
+
+build/tcp_stub.o: src/tcp_stub.s
+	mkdir -p build
+	ca65 -t apple2enh -o $@ $<
 
 build/tcp.o: $(IP65)/ip65/tcp.s tools/patch_ip65_tcp.py
 	mkdir -p build/ip65-src
