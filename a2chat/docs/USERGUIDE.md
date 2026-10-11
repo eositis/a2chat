@@ -2,7 +2,7 @@
 
 A2CHAT is a ProDOS 8 chat client for an enhanced Apple IIe, Apple IIc, or Apple IIgs. It talks HTTP to [Ollama](https://ollama.com) on your LAN, streams the reply in 80-column text, and can save notes or BASIC listings onto a ProDOS volume.
 
-Version **1.3**. The help row shows the binary build on the far right (currently **B69**).
+Version **1.3**. The help row shows the binary build on the far right (currently **B70**).
 
 This guide is for using the program on the Apple. For building from source, see [README.md](README.md). For memory layout and measured timings, see [PERFORMANCE.md](PERFORMANCE.md).
 
@@ -69,7 +69,7 @@ If Ethernet fails, A2CHAT continues **offline**. `/cat`, `/config`, `/about`, `/
 |------|------|
 | 0 | Status: host, model, connection; after a reply, the token count (`31 tokens`) |
 | 1–22 | Scrolling transcript (`You` / `AI`); type on the `You` line |
-| 23 | Inverse help: commands on the left; **`HH:MM` and `B69` on the far right** |
+| 23 | Inverse help: commands on the left; **`HH:MM` and `B70` on the far right** |
 
 `P8` is the ProDOS clock, not a second build number. Only the **B** series is shown on the help row.
 

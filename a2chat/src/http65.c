@@ -284,8 +284,8 @@ static int wait_done(void)
         }
         if (pump_rx()) {
             rx_last = timer_jiffy();
-        } else if ((uint16_t)(timer_jiffy() - rx_last) > 20000u) {
-            /* ~20s of vertical blanks with no TCP payload. */
+        } else if ((uint16_t)(timer_jiffy() - rx_last) > 45000u) {
+            /* ~45s of vertical blanks with no TCP payload. */
             w5100_disconnect();
             strcpy(g_http_err, "recv timeout");
             return -1;
