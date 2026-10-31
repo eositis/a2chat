@@ -28,10 +28,12 @@
 #include <ip65.h>
 #include <string.h>
 #include <stdio.h>
+#include "a2chat.h"
 #include "w5100.h"
 #include "cogs.h"
 
 #define SOCK        0
+#define COGS_FIFO_SIZE 16384u   /* card-to-host FIFO (reference 3.3) */
 #define SEND_CHUNK  1024
 
 #define OP_NETINFO  0x08
@@ -69,6 +71,26 @@ static uint8_t  want_buf[8];
 
 static uint8_t  hdr[5];
 
+/* Trouble seen since the last connect, for cogs_report(). */
+static uint8_t  n_err;       /* ERROR events for our socket */
+static uint8_t  n_resync;    /* times the FIFOs were reset */
+static uint16_t n_drop;      /* our DATA payload bytes thrown away */
+static uint8_t  n_bad;       /* frames with an opcode a card never sends */
+static uint8_t  n_irq;       /* times we found IRQs enabled */
+static uint32_t n_rx;        /* our DATA payload bytes read */
+static uint16_t q_peak;      /* most card->host bytes queued at once */
+static uint16_t t_open;      /* timer_jiffy() when the socket opened */
+static uint16_t t_last;      /* timer_jiffy() at the last payload read */
+
+/* Disk I/O between requests can leave IRQs on. Keep them off while we
+ * own the FIFO, and count how often they were found on. */
+static void irq_off(void)
+{
+    if (cogs_irq_off() && n_irq < 255) {
+        ++n_irq;
+    }
+}
+
 const char *cogs_strerror(uint8_t code)
 {
     switch (code) {
@@ -95,6 +117,7 @@ uint8_t cogs_last_error(void)
  * parser and both FIFOs; anything in flight on our socket is gone. */
 static void desync(void)
 {
+    ++n_resync;
     cogs_resync();
     rx_left = 0;
     tx_unacked = 0;
@@ -180,6 +203,9 @@ static int8_t poll_one(void)
             return 2;
         }
         /* Another socket, or ours while closing: drop it. */
+        if (sock == SOCK && st != S_CLOSING) {
+            n_drop += len;
+        }
         if (len && cogs_skip(len)) goto bad;
         return 1;
     }
@@ -224,19 +250,26 @@ static int8_t poll_one(void)
         break;
     case EV_ERROR:
         if (sock == SOCK || sock == 0xFF) {
+            ++n_err;
             last_err = pl[1];
             if (st == S_CONNECTING || sock == 0xFF) {
                 st = S_CLOSED;
             }
             if (sock == 0xFF) {
                 /* The card could not parse something we sent. */
+                ++n_resync;
                 cogs_resync();
                 tx_unacked = 0;
             }
         }
         break;
     default:
-        break;   /* WIFI_STATE, unrelated replies, ... */
+        /* WIFI_STATE, unrelated replies, ... Card->host opcodes all have
+         * bit 7 set, so anything else means we lost frame alignment. */
+        if (!(op & 0x80)) {
+            ++n_bad;
+        }
+        break;
     }
     return 1;
 
@@ -337,6 +370,7 @@ bool w5100_connect_name(const char *name, uint8_t length, uint16_t port)
 {
     uint8_t pre[5];
     uint16_t t0;
+    uint8_t irq_was_on = cogs_irq_off();
 
     if (st != S_CLOSED) {
         w5100_disconnect();
@@ -347,6 +381,13 @@ bool w5100_connect_name(const char *name, uint8_t length, uint16_t port)
     pre[3] = (uint8_t)(port >> 8);
     pre[4] = length;
     last_err = 0;
+    n_err = 0;
+    n_resync = 0;
+    n_drop = 0;
+    n_bad = 0;
+    n_irq = irq_was_on;
+    n_rx = 0;
+    q_peak = 0;
     rx_left = 0;
     tx_unacked = 0;
     st = S_CONNECTING;
@@ -360,6 +401,9 @@ bool w5100_connect_name(const char *name, uint8_t length, uint16_t port)
     t0 = timer_jiffy();
     while (st == S_CONNECTING) {
         poll_one();
+        if (st == S_OPEN) {
+            t_open = t_last = timer_jiffy();
+        }
         if (input_check_for_abort_key()) {
             w5100_disconnect();
             return false;
@@ -427,6 +471,7 @@ uint16_t w5100_data_request(bool do_send)
     if (do_send) {
         return 0;               /* use cogs_send() */
     }
+    irq_off();
     if (!rx_left) {
         poll_all();
         if (!rx_left) {
@@ -434,7 +479,22 @@ uint16_t w5100_data_request(bool do_send)
         }
     }
     a = cogs_avail();
+    if (a > q_peak) {
+        q_peak = a;
+    }
     return a < rx_left ? a : rx_left;
+}
+
+uint8_t cogs_rx(uint8_t *dst, uint8_t n)
+{
+    if (cogs_getn(dst, n)) {
+        desync();
+        return 1;
+    }
+    rx_left = (uint16_t)(rx_left - n);
+    n_rx += n;
+    t_last = timer_jiffy();
+    return 0;
 }
 
 void w5100_data_commit(bool do_send, uint16_t size)
@@ -444,12 +504,44 @@ void w5100_data_commit(bool do_send, uint16_t size)
     }
 }
 
+void cogs_report(void)
+{
+    char msg[80];
+
+    /* Always shown while CoGS support is being tested. */
+    sprintf(msg, "CoGS B%s: %lu bytes in %u.%us, peak queue %u",
+            A2CHAT_BUILD_STR, (unsigned long)n_rx,
+            (unsigned)((uint16_t)(t_last - t_open) / 1000u),
+            (unsigned)((uint16_t)(t_last - t_open) % 1000u / 100u),
+            q_peak);
+    ui_nl();
+    ui_print(msg);
+    ui_nl();
+    sprintf(msg, "  err %u (%s) resync %u drop %u bad %u irq %u",
+            (unsigned)n_err, n_err ? "see below" : "-", (unsigned)n_resync,
+            n_drop, (unsigned)n_bad, (unsigned)n_irq);
+    ui_print(msg);
+    ui_nl();
+    if (n_err) {
+        ui_print("  last error: ");
+        ui_print(cogs_strerror(last_err));
+        ui_nl();
+    }
+    if (q_peak >= COGS_FIFO_SIZE) {
+        /* The card drops socket data once its FIFO fills (contrary to
+         * the reference, which promises TCP flow control instead). */
+        ui_print("  Card buffer filled: this reply may be damaged.");
+        ui_nl();
+    }
+}
+
 int cogs_send(const uint8_t *p, uint16_t len)
 {
     uint8_t s = SOCK;
     uint16_t n;
     uint16_t t0;
 
+    irq_off();
     while (len) {
         /* One SEND in flight at a time. If the server is already
          * answering (our data pending), stop waiting for the ack. */

@@ -16,6 +16,27 @@ static void collect(char ch, void *user)
     }
 }
 
+static void collect_span(const char *p, unsigned n, void *user)
+{
+    while (n--) {
+        collect(*p++, user);
+    }
+}
+
+/* Feed a file through jsonscan_feed_buf in 64-byte windows, the way the
+ * Apple's receive loop does. */
+static void feed_file_buf(struct jsonscan *j, const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    char win[64];
+    size_t n;
+    assert(f);
+    while ((n = fread(win, 1, sizeof(win), f)) > 0) {
+        jsonscan_feed_buf(j, win, (unsigned)n);
+    }
+    fclose(f);
+}
+
 static void feed_file(struct jsonscan *j, const char *path)
 {
     FILE *f = fopen(path, "rb");
@@ -52,6 +73,53 @@ int main(void)
         return 1;
     }
 
+    /* UTF-8 and \u escapes come out as ASCII, whether a sequence arrives
+     * in one receive window or split across several. */
+    {
+        static const char want[] =
+            "I'm 80's cafe - \"hi\"... spell-book ? ok|'xe?y";
+        static const unsigned wins[] = { 64, 1, 3 };
+        unsigned w;
+
+        for (w = 0; w < sizeof(wins) / sizeof(wins[0]); w++) {
+            FILE *uf = fopen("fixtures/utf8.ndjson", "rb");
+            char win[64];
+            size_t n;
+
+            assert(uf);
+            jsonscan_init(&j);
+            j.on_content = collect;
+            j.on_span = collect_span;
+            accn = 0;
+            acc[0] = 0;
+            while ((n = fread(win, 1, wins[w], uf)) > 0) {
+                jsonscan_feed_buf(&j, win, (unsigned)n);
+            }
+            fclose(uf);
+            if (strcmp(acc, want) != 0 || j.eval_count != 5) {
+                fprintf(stderr, "utf8 (window %u) got '%s'\n", wins[w], acc);
+                return 1;
+            }
+        }
+    }
+
+    /* STREAM=0: one JSON object, reasoning first, through the fast path. */
+    jsonscan_init(&j);
+    j.on_content = collect;
+    j.on_span = collect_span;
+    accn = 0;
+    acc[0] = 0;
+    feed_file_buf(&j, "fixtures/chat_whole.json");
+    if (strcmp(acc, "Here are ideas:\n- **Witch**: hat, broom\n"
+                    "- **Ghost**: a sheet") != 0) {
+        fprintf(stderr, "whole reply content got '%s'\n", acc);
+        return 1;
+    }
+    if (j.eval_count != 42) {
+        fprintf(stderr, "whole reply eval_count %u\n", j.eval_count);
+        return 1;
+    }
+
     jsonscan_init(&j);
     j.on_content = collect;
     accn = 0;
@@ -85,6 +153,20 @@ int main(void)
         strcmp(cfg_api_path(&c, "/api/chat"), "/olla/ollama/api/chat") ||
         strcmp(cfg_api_path(&c, "/api/tags"), "/olla/ollama/api/tags")) {
         fprintf(stderr, "olla path fail '%s'\n", cfg_api_path(&c, "/api/chat"));
+        return 1;
+    }
+    if (c.stream != 1) {
+        fprintf(stderr, "STREAM default %u\n", c.stream);
+        return 1;
+    }
+    cfg_parse_line(&c, "STREAM=0");
+    if (c.stream != 0) {
+        fprintf(stderr, "STREAM=0 parse fail\n");
+        return 1;
+    }
+    cfg_parse_line(&c, "stream=1");
+    if (c.stream != 1) {
+        fprintf(stderr, "stream=1 parse fail\n");
         return 1;
     }
     cfg_parse_line(&c, "PORT=11434");

@@ -10,6 +10,8 @@ Current release: **version 1.1** (help row **38**).
 
 **Pitch / one-pagers:** [MARKETING.md](MARKETING.md).
 
+**Planned work:** [TODO.md](TODO.md).
+
 This file is the build and developer overview.
 
 ## Hardware
@@ -20,11 +22,13 @@ This file is the build and developer overview.
 
 ## Build
 
-Needs [cc65](https://cc65.github.io/) (`cl65` on your PATH) and the local IP65 tree:
+Needs [cc65](https://cc65.github.io/) (`cl65` on your PATH; 2.19 or a later snapshot) and an [IP65](https://github.com/cc65/ip65) checkout. The Makefile looks for it next to this repo (`../ip65` from the repo root); point it elsewhere with:
 
-```text
-IP65=/Users/eositis/Documents/GitHub/ip65
+```sh
+make IP65=/path/to/ip65
 ```
+
+The disk images also need Java and [AppleCommander](https://applecommander.github.io/) (`JAVA=`, `AC_JAR=` override the defaults).
 
 ```sh
 cd a2chat
@@ -84,6 +88,7 @@ Set `PORT=40114` (or `/config`) and keep `HOST=` as the machine running Olla. Op
 | `MAXHIST` | bytes of log spliced into each POST |
 | `MAXREAD` / `MAXWRITE` | file I/O caps |
 | `HISTCAP` | compact `A2CHAT.LOG` when larger |
+| `STREAM` | 1 = show replies word by word, 0 = wait for the whole reply; default 1 (Uthernet II), 0 (CoGS) |
 
 Chat POST is staged in 32K aux RAM, not a scratch BOD file. Disk is still slow for `/save` and `/read` of large files.
 

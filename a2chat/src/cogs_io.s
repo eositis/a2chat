@@ -17,8 +17,7 @@
 ; Every DATA access uses abs,X addressing ("lda DATA,x" / "sta DATA,x"),
 ; which is the access pattern the CoGS technical reference documents as
 ; safe. A DATA read with nothing queued returns $00 and loses nothing, but
-; it also returns a wrong byte, so every read is gated on STATUS or on the
-; RXLO/RXHI count.
+; it also returns a wrong byte, so every read is gated on STATUS RX_AVAIL.
 ;
 
         .export         _cogs_set_slot
@@ -32,6 +31,7 @@
         .export         _cogs_put
         .export         _cogs_putn
         .export         _cogs_resync
+        .export         _cogs_irq_off
 
         .import         popa, popax
         .importzp       ptr1, ptr2, tmp1, tmp2
@@ -142,34 +142,42 @@ _cogs_get:
         ldx     #0
         rts
 
-; void __fastcall__ cogs_getn(unsigned char *dst, unsigned int n)
-; Pop exactly n bytes into dst. The caller has already seen at least n
-; bytes queued (cogs_avail), so there is no per-byte STATUS poll here.
+; unsigned char __fastcall__ cogs_getn(unsigned char *dst, unsigned char n)
+; Pop n bytes into dst. Each byte waits for RX_AVAIL like cogs_get does:
+; reading DATA back to back on the strength of the RXLO/RXHI count alone
+; is the suspect in garbled replies seen on real hardware.
+; Returns 0 on success, 1 if a byte never arrived.
 _cogs_getn:
-        sta     ptr2            ; n lo
-        stx     ptr2+1          ; n hi
+        sta     ptr2            ; n
         jsr     popax
         sta     ptr1
         stx     ptr1+1
         ldx     slotx
         ldy     #0
-        lda     ptr2+1
-        beq     @tail
-@page:  lda     REG_DATA,x
-        sta     (ptr1),y
-        iny
-        bne     @page
-        inc     ptr1+1
-        dec     ptr2+1
-        bne     @page
-@tail:  lda     ptr2
-        beq     @done
-@byte:  lda     REG_DATA,x
+        cpy     ptr2
+        beq     @ok
+@byte:  lda     REG_STATUS,x
+        bpl     @slow
+@rd:    lda     REG_DATA,x
         sta     (ptr1),y
         iny
         cpy     ptr2
         bne     @byte
-@done:  rts
+@ok:    lda     #0
+        tax
+        rts
+@slow:  lda     #0              ; bounded wait, about 1 s at 1 MHz
+        sta     tmp1
+        sta     tmp2
+@w:     lda     REG_STATUS,x
+        bmi     @rd
+        inc     tmp1
+        bne     @w
+        inc     tmp2
+        bne     @w
+        lda     #1
+        ldx     #0
+        rts
 
 ; unsigned char __fastcall__ cogs_skip(unsigned int n)
 ; Pop and discard n bytes, polling STATUS for each (the bytes may still
@@ -259,6 +267,20 @@ _cogs_putn:
         tax
         rts
 @to:    lda     #1
+        ldx     #0
+        rts
+
+; unsigned char cogs_irq_off(void)
+; Mask IRQs. Returns 1 if they were enabled (I flag clear), else 0. A card
+; driver's interrupt handler could otherwise pop our frames from the FIFO.
+_cogs_irq_off:
+        php
+        pla
+        sei
+        and     #$04
+        eor     #$04
+        lsr
+        lsr
         ldx     #0
         rts
 

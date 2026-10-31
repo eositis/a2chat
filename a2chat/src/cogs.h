@@ -8,9 +8,9 @@
  *  - The card does DHCP / static addressing, DNS and TCP itself. IP65 is
  *    not initialized and no MACRAW traffic ever happens.
  *  - Received bytes are popped from the card's DATA register, so after
- *    w5100_receive_request() the caller reads them with cogs_getn() (the
+ *    w5100_receive_request() the caller reads them with cogs_rx() (the
  *    W5100 "read *w5100_data n times" idiom still works for reads, but
- *    A2CHAT uses the block call).
+ *    A2CHAT uses cogs_rx()).
  *  - Sends are whole SEND frames whose length is known up front, so
  *    callers use cogs_send() instead of w5100_send_request()/commit().
  *
@@ -28,13 +28,19 @@ uint8_t __fastcall__ cogs_reg_rd(uint8_t reg);
 void __fastcall__ cogs_reg_wr(uint8_t reg, uint8_t val);
 uint16_t cogs_avail(void);
 int cogs_get(void);
-void __fastcall__ cogs_getn(uint8_t *dst, uint16_t n);
+uint8_t __fastcall__ cogs_getn(uint8_t *dst, uint8_t n);
 uint8_t __fastcall__ cogs_skip(uint16_t n);
 uint8_t __fastcall__ cogs_put(uint8_t b);
 uint8_t __fastcall__ cogs_putn(const uint8_t *src, uint16_t n);
 uint8_t cogs_resync(void);
+uint8_t cogs_irq_off(void);
 
 /* src/cogs.c */
+
+/* Pop n (<= 255) bytes of the pending DATA payload into dst, after
+ * w5100_receive_request(). Replaces w5100_receive_commit(). Return 0 on
+ * success, nonzero if the card stalled (the socket is then closed). */
+uint8_t cogs_rx(uint8_t *dst, uint8_t n);
 
 /* Send len bytes on the open TCP socket (split into SEND frames).
  * Return 0 on success, -1 if the socket is gone or the user aborted. */
@@ -50,5 +56,9 @@ uint8_t cogs_last_error(void);
 
 /* Short name for a card error code. */
 const char *cogs_strerror(uint8_t code);
+
+/* Print card errors, resyncs and dropped bytes seen since the last
+ * connect, if there were any. */
+void cogs_report(void);
 
 #endif

@@ -55,6 +55,7 @@ void cfg_defaults(struct a2cfg *c)
     c->maxread = 4096;
     c->maxwrite = 0xFFFFu;
     c->histcap = 0x7FFFu;
+    c->stream = A2CHAT_STREAM_DEFAULT;
 }
 
 void cfg_parse_line(struct a2cfg *c, const char *line)
@@ -103,6 +104,8 @@ void cfg_parse_line(struct a2cfg *c, const char *line)
         c->maxwrite = (uint16_t)atoi(val);
     } else if (keyeq(buf, "HISTCAP")) {
         c->histcap = (uint16_t)atoi(val);
+    } else if (keyeq(buf, "STREAM")) {
+        c->stream = (uint8_t)(atoi(val) != 0);
     }
 }
 
@@ -247,6 +250,7 @@ int cfg_save(const struct a2cfg *c, const char *path)
     fprintf(f, "MAXREAD=%u\n", (unsigned)c->maxread);
     fprintf(f, "MAXWRITE=%u\n", (unsigned)c->maxwrite);
     fprintf(f, "HISTCAP=%u\n", (unsigned)c->histcap);
+    fprintf(f, "STREAM=%u\n", (unsigned)c->stream);
 #else
     fprintf(f, "HOST=%s\r", c->host);
     fprintf(f, "PORT=%u\r", (unsigned)c->port);
@@ -260,6 +264,7 @@ int cfg_save(const struct a2cfg *c, const char *path)
     fprintf(f, "MAXREAD=%u\r", (unsigned)c->maxread);
     fprintf(f, "MAXWRITE=%u\r", (unsigned)c->maxwrite);
     fprintf(f, "HISTCAP=%u\r", (unsigned)c->histcap);
+    fprintf(f, "STREAM=%u\r", (unsigned)c->stream);
 #endif
     fclose(f);
     return 0;

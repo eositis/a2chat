@@ -20,7 +20,7 @@ uint16_t timer_jiffy(void);
 int net_init(uint8_t slot)
 {
     uint8_t link = 0;
-    uint16_t t0;
+    uint16_t t0, t1;
     char msg[40];
 
     g_net_ok = 0;
@@ -53,6 +53,10 @@ int net_init(uint8_t slot)
                                : "CoGS: network is down");
             ui_nl();
             return -1;
+        }
+        /* Ask again in a quarter second, not back to back. */
+        t1 = timer_jiffy();
+        while ((uint16_t)(timer_jiffy() - t1) < 250) {
         }
     }
     g_net_ok = 1;

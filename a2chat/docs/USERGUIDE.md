@@ -49,7 +49,7 @@ Copy `a2chat.po` (140K) or `a2chat.hdv` (8MB) onto a floppy, SmartPort image, or
 
 **If you rebuilt with `make` / `make disk` / `make hd`:** the image always gets the *sample* `cfg/A2CHAT.CFG`. After copying the new image to the Apple, restore your real `HOST`, `MODEL`, `PREFIX`, and static `IP` if you use them.
 
-Edit `A2CHAT.CFG` with any ProDOS text editor, or from inside A2CHAT with `/config` (host, port, model, slot only — PREFIX and IP are still edited in the file).
+Edit `A2CHAT.CFG` with any ProDOS text editor, or from inside A2CHAT with `/config` (host, port, model, slot and stream only — PREFIX and IP are still edited in the file). Each prompt shows the current value in brackets; press Return to keep it.
 
 `A2CHAT.TXT` and `A2SOFT.TXT` are sent as the system prompt on every chat. `A2CHAT.TXT` is the short instruction. `A2SOFT.TXT` is the Applesoft reference (line numbers, no `ELSE` or `WHILE`, and a single ```basic fence around a program). Edit either file next to the program. Changes apply on the next message. If `A2CHAT.TXT` is missing, A2CHAT uses a short built-in default and still sends `A2SOFT.TXT` when that file is present.
 
@@ -92,8 +92,9 @@ Lines are `KEY=value`. Unknown keys are ignored.
 | `MAXHIST` | Bytes of `A2CHAT.LOG` sent with each chat POST |
 | `MAXREAD` / `MAXWRITE` | Size caps for file tools |
 | `HISTCAP` | Compact the log when it grows past this |
+| `STREAM` | `1` shows the reply word by word as the model writes it. `0` waits and shows the whole reply at once, which sends far less data. Default `1`, or `0` on the CoGS build. |
 
-`/config` saves host, port, model, and slot into `A2CHAT.CFG`. If you change slot or IP, quit and run A2CHAT again so Ethernet re-inits.
+`/config` saves host, port, model, slot, and stream into `A2CHAT.CFG` and updates the title bar at once. If you change slot or IP, quit and run A2CHAT again so Ethernet re-inits.
 
 Use a `PREFIX` on a larger volume when you want notes and logs off the 140K program disk. Create that directory in ProDOS first.
 
@@ -101,7 +102,7 @@ Use a `PREFIX` on a larger volume when you want notes and logs off the 140K prog
 
 | Command | Also | Action |
 |---------|------|--------|
-| `/config` | `/c` | Edit host, port, model, slot; save CFG |
+| `/config` | `/c` | Edit host, port, model, slot, stream; save CFG |
 | `/ping` | `/p` | Re-probe Ollama |
 | `/cat` | | List PREFIX, or the current ProDOS directory if PREFIX is empty |
 | `/cat PATH` | | List that directory. `/DEVTOOLS/A2CHAT` is a full path; `CAL2` is a name in the current directory |

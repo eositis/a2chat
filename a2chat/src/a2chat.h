@@ -7,7 +7,12 @@
 #include <stddef.h>
 
 #define A2CHAT_BUILD 69
+/* make BUILD_TAG=c5 marks test builds: the help row then shows B69c5. */
+#ifdef A2CHAT_BUILD_TAG
+#define A2CHAT_BUILD_STR "69" A2CHAT_BUILD_TAG
+#else
 #define A2CHAT_BUILD_STR "69"
+#endif
 #define A2CHAT_VERSION "1.3"
 /* About date. Change this whenever A2CHAT_BUILD changes. */
 #define A2CHAT_DATE "8 October 2026"
@@ -33,7 +38,17 @@ struct a2cfg {
     uint16_t maxread;
     uint16_t maxwrite;
     uint16_t histcap;
+    uint8_t stream; /* STREAM=: 1 word by word, 0 whole reply at once */
 };
+
+/* The CoGS card loses data once its 16 KB FIFO to the Apple fills, which a
+ * streamed reply (about 140 bytes of JSON per word) easily does. A whole
+ * reply in one JSON object is far smaller. */
+#ifdef A2CHAT_COGS
+#define A2CHAT_STREAM_DEFAULT 0
+#else
+#define A2CHAT_STREAM_DEFAULT 1
+#endif
 
 struct jsonscan {
     char win[A2CHAT_WIN];
@@ -43,6 +58,9 @@ struct jsonscan {
     uint8_t escape;
     uint8_t unicode_n;
     uint16_t unicode;
+    uint8_t u8_need;    /* UTF-8 continuation bytes still owed */
+    uint8_t u8_big;     /* sequence is past U+FFFF */
+    uint16_t u8_cp;
     uint8_t seen_arguments;
     uint8_t seen_tool_calls;
     uint8_t done;

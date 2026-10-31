@@ -174,8 +174,10 @@ static uint8_t pump_rx(void)
     if (n > sizeof(rxwin)) {
         n = sizeof(rxwin);
     }
-    cogs_getn((uint8_t *)rxwin, n);
-    w5100_receive_commit(n);
+    if (cogs_rx((uint8_t *)rxwin, (uint8_t)n)) {
+        rx_eof = 1;             /* card stalled; cogs_report() says so */
+        return 0;
+    }
     i = 0;
     while (i < (uint8_t)n && !rx_have_hdr) {
         feed_byte(rxwin[i]);
