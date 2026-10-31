@@ -11,6 +11,17 @@ JAVA ?= /opt/homebrew/opt/openjdk/bin/java
 AC_JAR ?= $(HOME)/Library/Application Support/AppleCommander/AppleCommander-ac-13.0.jar
 PRODOS_SRC ?= $(IP65)/build/prodos.dsk
 DISK = a2chat.po
+
+# make COGS=1 builds for the CoGS card instead of the Uthernet II.
+# The card does DHCP/DNS/TCP itself, so IP65 is only used for helpers.
+ifeq ($(COGS),1)
+CFLAGS += -DA2CHAT_COGS
+NETDRV = src/cogs.c
+NETASM = src/cogs_io.s
+else
+NETDRV = src/w5100.c
+NETASM =
+endif
 HD = a2chat.hdv
 
 SRCS = \
@@ -23,7 +34,7 @@ SRCS = \
 	src/prodos.c \
 	src/net.c \
 	src/http65.c \
-	src/w5100.c \
+	$(NETDRV) \
 	src/ollama.c \
 	src/clock.c
 
@@ -35,7 +46,8 @@ ASM = \
 	src/eth_buffer.s \
 	src/chatmem.s \
 	src/basload.s \
-	src/close.s
+	src/close.s \
+	$(NETASM)
 
 IP65OVR = \
 	build/tcp_stub.o \
@@ -85,7 +97,7 @@ build/ethernet_a2chat.o: src/ethernet_a2chat.s
 	mkdir -p build
 	$(CA65IP) -o $@ $<
 
-a2chat.bin A2CHAT.DTK A2CHAT.TOK: $(SRCS) src/a2chat.h $(ASM) $(IP65OVR) cfg/apple2enh-a2chat.cfg $(CUSTOMLIB) src/basdetok.s src/bastok.s src/basboot.s tools/mkovl.py tools/tokcfg.py tools/bootcfg.py tools/wraptok.py
+a2chat.bin A2CHAT.DTK A2CHAT.TOK: $(SRCS) src/a2chat.h src/cogs.h src/cogs.c src/cogs_io.s src/w5100.c $(ASM) $(IP65OVR) cfg/apple2enh-a2chat.cfg $(CUSTOMLIB) src/basdetok.s src/bastok.s src/basboot.s tools/mkovl.py tools/tokcfg.py tools/bootcfg.py tools/wraptok.py
 	$(CC65) -o $@ $(CFLAGS) --no-target-lib -m a2chat.map -Ln a2chat.lbl build/crt0.o $(IP65OVR) $(SRCS) $(ASM) $(IP65LIB) $(A2DRV) $(CUSTOMLIB)
 	mkdir -p build
 	python3 tools/mkovl.py a2chat.lbl build/ovlsym.inc build/basovl.cfg

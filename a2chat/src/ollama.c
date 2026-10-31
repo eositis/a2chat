@@ -328,7 +328,11 @@ int ollama_send(const char *user_text, const char *attach_path)
         return -1;
     }
     addr = parse_dotted_quad(g_cfg.host);
+#ifdef A2CHAT_COGS
+    if (!g_cfg.host[0]) {   /* the CoGS card resolves hostnames */
+#else
     if (!addr) {
+#endif
         bas_lst = 0;
         ui_print("HOST must be dotted IPv4 in v1");
         ui_nl();
