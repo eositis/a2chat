@@ -57,7 +57,7 @@ Edit `A2CHAT.CFG` with any ProDOS text editor, or from inside A2CHAT with `/conf
 
 1. Boot the volume. You should get 80-column A2CHAT, not Applesoft.
 2. The top inverse bar shows host, port, model, slot, and `Conn` or `----`. After a reply it shows the token count (for example `31 tokens`).
-3. Startup prints the config path, the data directory, **Clock P8** (or `MFMS` / `JIFFY`), wall time, the Apple IP, and an Ollama probe.
+3. Startup prints the config path, the data directory, **Clock P8** (or `MFMS` / `COGS` / `JIFFY`), wall time, the Apple IP, and an Ollama probe.
 4. **Connection established** means HTTP reached Ollama. If the first connect does not finish in about 30 seconds, A2CHAT retries twice.
 5. Type a question and press Return, or type a slash command from the help row.
 
@@ -159,7 +159,7 @@ Disk is slow. Short chats should finish in a few seconds of Apple-side work plus
 
 POST body and the streamed answer use **32K of aux RAM** (`$4000–$BFFF`). After each reply the top bar shows Ollama `eval_count` as `31 tokens`.
 
-Wall clock on the help row is MegaFlash time when that card answers (`MFMS`). Otherwise it is ProDOS hour and minute (`P8`), shown as `HH:MM`. Clock-card IRQs are left masked.
+Wall clock on the help row is MegaFlash time when that card answers (`MFMS`). Otherwise it is ProDOS hour and minute (`P8`), shown as `HH:MM`. The CoGS build with no other clock asks the card (`COGS`): its internet time plus the timezone offset set on the card's own config screen, which does not change for daylight saving by itself. It shows `--:--` until the card has the time, and also sets the ProDOS date, so log entries and files written by `/save` are dated. `JIFFY` means no clock was found. Clock-card IRQs are left masked.
 
 Numbers from the B7–B13 bring-up (same LAN, `llama3.2:3b`) are in [PERFORMANCE.md](PERFORMANCE.md).
 

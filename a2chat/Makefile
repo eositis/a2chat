@@ -89,9 +89,12 @@ ip65:
 	$(MAKE) -C $(IP65)/drivers ip65_apple2_uther2.lib
 
 # Records the last network variant built, so switching COGS= relinks.
+# The sleep makes a changed stamp newer than the last link even when make
+# compares whole seconds (GNU make 3.81 on macOS) and the builds run back
+# to back.
 build/variant: FORCE
 	@mkdir -p build
-	@echo $(VARIANT) | cmp -s - $@ || echo $(VARIANT) > $@
+	@echo $(VARIANT) | cmp -s - $@ || { sleep 1; echo $(VARIANT) > $@; }
 
 build/tcp_stub.o: src/tcp_stub.s
 	mkdir -p build

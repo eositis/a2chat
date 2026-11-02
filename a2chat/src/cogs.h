@@ -50,6 +50,11 @@ int cogs_send(const uint8_t *p, uint16_t len);
  * (same layout as IP65's cfg_ip). Return 0 on success. */
 int cogs_netinfo(uint8_t *link_state, uint32_t *ip);
 
+/* LOCALTIME: local time as seconds since 1904-01-01, from the card's NTP
+ * clock plus its timezone offset. Return 0 on success, -1 if the card has
+ * no time yet, did not answer, or a socket is open. */
+int cogs_localtime(uint32_t *secs);
+
 /* Card result code of the last failure (CONNECT, SEND_ACK, ERROR event).
  * 2 DNS_FAIL, 3 CONN_TIMEOUT, 4 CONN_REFUSED, 7 NO_FREE_SOCK, ... */
 uint8_t cogs_last_error(void);

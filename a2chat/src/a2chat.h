@@ -193,8 +193,10 @@ void prodos_quit(void);
 #define CLOCK_JIFFY 1
 #define CLOCK_NSC   2
 #define CLOCK_MFMS  3
+#define CLOCK_COGS  4
 uint8_t clock_kind(void);
 void clock_init(void);
+void clock_cogs(void);
 void clock_wall(char *dst, unsigned dstsz);
 void clock_stamp(char *dst, unsigned dstsz);
 void clock_reset_ms(void);

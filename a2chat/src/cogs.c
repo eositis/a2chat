@@ -10,6 +10,7 @@
  *   SEND    $11  sock, data (<= 2047)
  *   CLOSE   $12  sock
  *   NETINFO $08  -> $88  link_state, ip[4], ...
+ *   LOCALTIME $0F -> $8F valid, auto, secs since 1904 (4, local time)
  *   events: CONNECTED $90 (sock,result)  DATA $91 (sock,data...)
  *           CLOSED $92 (sock,reason)      ERROR $93 (sock,code)
  *           SEND_ACK $9A (sock,result)
@@ -37,6 +38,7 @@
 #define SEND_CHUNK  1024
 
 #define OP_NETINFO  0x08
+#define OP_LOCALTIME 0x0F
 #define OP_CONNECT  0x10
 #define OP_SEND     0x11
 #define OP_CLOSE    0x12
@@ -323,6 +325,16 @@ int cogs_netinfo(uint8_t *link_state, uint32_t *ip)
     }
     *link_state = want_buf[0];
     memcpy(ip, want_buf + 1, 4);
+    return 0;
+}
+
+int cogs_localtime(uint32_t *secs)
+{
+    /* request() would throw away socket data queued ahead of the reply. */
+    if (st != S_CLOSED || request(OP_LOCALTIME, 500) || !want_buf[0]) {
+        return -1;
+    }
+    memcpy(secs, want_buf + 2, 4);
     return 0;
 }
 

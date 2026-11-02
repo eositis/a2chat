@@ -20,6 +20,7 @@ before copying a disk image.
 | DNS | none, `HOST=` must be a dotted IPv4 address | the card resolves names, so `HOST=` may be a hostname (31 chars max) |
 | TCP | W5100 socket, driven register by register | card socket 0, via `CONNECT` / `SEND` / `CLOSE` frames |
 | Replies | streamed word by word (`STREAM=1`) | whole reply at once (`STREAM=0`); see below |
+| Clock | ProDOS or MegaFlash clock, if any | the same, else the card's `LOCALTIME` (internet time plus the card's timezone offset); also sets the ProDOS date |
 | Slot detection | W5100 retransmit-register probe | CoGS ID register (`$C0n5 = $A2`), slots 7..1, Disk II slots skipped. `SLOT=` still overrides |
 
 On startup A2CHAT waits up to about 20 seconds for the card to report a

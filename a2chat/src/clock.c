@@ -4,6 +4,9 @@
 #ifndef A2CHAT_HOST
 #include <ip65.h>
 #endif
+#ifdef A2CHAT_COGS
+#include "cogs.h"
+#endif
 
 unsigned char p8_time(unsigned char *h, unsigned char *m);
 unsigned char mf_present(void);
@@ -13,6 +16,9 @@ unsigned char __fastcall__ mf_timestr(char *dst);
 
 static uint8_t g_p8;
 static uint8_t g_mf;
+#ifdef A2CHAT_COGS
+static uint8_t g_cogs;
+#endif
 static uint16_t jiffy0;
 static char g_wall[9];
 
@@ -35,6 +41,69 @@ static void wall_hm(void)
         g_wall[5] = 0;
     }
 }
+
+#ifdef A2CHAT_COGS
+static const uint8_t mdays[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+static uint32_t cg_s;
+static uint16_t cg_d, cg_m, cg_y;
+static uint8_t cg_h, cg_n, cg_mon;
+
+/* Card time to HH:MM in g_wall and the ProDOS date/time at $BF90-$BF93,
+ * so log stamps and files written by /save get the date. Keeps the old
+ * values when the card has no time yet or a socket is open. Loops and
+ * 16-bit math instead of 32-bit multiply and modulo, to save code. */
+static void cogs_wall(void)
+{
+    if (cogs_localtime(&cg_s)) {
+        return;
+    }
+    cg_s /= 60u;                        /* minutes since 1904-01-01 */
+    cg_d = (uint16_t)(cg_s / 1440u);
+    cg_m = (uint16_t)cg_s - cg_d * 1440u; /* exact: the low 16 bits */
+    for (cg_h = 0; cg_m >= 60u; cg_h++) {
+        cg_m -= 60u;
+    }
+    put2(g_wall, cg_h);
+    g_wall[2] = ':';
+    put2(g_wall + 3, (unsigned char)cg_m);
+    g_wall[5] = 0;
+    /* Every 4th year from 1904 is a leap year until 2100. */
+    for (cg_y = 4; cg_d >= 1461u; cg_y += 4) {
+        cg_d -= 1461u;
+    }
+    for (;;) {
+        cg_n = (cg_y & 3) ? 0 : 1;
+        if (cg_d < 365u + cg_n) {
+            break;
+        }
+        cg_d -= 365u + cg_n;
+        cg_y++;
+    }
+    for (cg_mon = 0; cg_mon < 11; cg_mon++) {
+        cg_n = mdays[cg_mon] + (cg_mon == 1 && !(cg_y & 3));
+        if (cg_d < cg_n) {
+            break;
+        }
+        cg_d -= cg_n;
+    }
+    if (cg_y >= 100u) {                 /* years since 1900, mod 100 */
+        cg_y -= 100u;
+    }
+    *(volatile uint16_t *)0xBF90 =
+        (cg_y << 9) | ((uint16_t)(cg_mon + 1) << 5) | (cg_d + 1);
+    *(volatile unsigned char *)0xBF92 = (unsigned char)cg_m;
+    *(volatile unsigned char *)0xBF93 = cg_h;
+}
+
+/* Use the card's clock when there is no other. Call after net_init(). */
+void clock_cogs(void)
+{
+    if (!g_mf && !g_p8) {
+        g_cogs = 1;
+        cogs_wall();
+    }
+}
+#endif
 
 void clock_init(void)
 {
@@ -72,6 +141,11 @@ void clock_init(void)
 
 uint8_t clock_kind(void)
 {
+#ifdef A2CHAT_COGS
+    if (g_cogs) {
+        return CLOCK_COGS;
+    }
+#endif
     if (g_mf) {
         return CLOCK_MFMS;
     }
@@ -83,6 +157,11 @@ uint8_t clock_kind(void)
 
 const char *clock_kind_name(void)
 {
+#ifdef A2CHAT_COGS
+    if (g_cogs) {
+        return "COGS";
+    }
+#endif
     if (g_mf) {
         return "MFMS";
     }
@@ -110,6 +189,11 @@ void clock_wall(char *dst, unsigned dstsz)
         put2(g_wall + 3, m);
         g_wall[5] = 0;
     }
+#ifdef A2CHAT_COGS
+    if (g_cogs) {
+        cogs_wall();
+    }
+#endif
     if (!g_wall[0]) {
         strcpy(g_wall, "--:--");
     }

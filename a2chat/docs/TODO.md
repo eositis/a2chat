@@ -35,8 +35,8 @@ only checks the HTTP status and discards the body. Instead:
 - When `MODEL=` is not in the list, say so at startup or on `/ping` and
   suggest the closest match (for example `gpt-oss` → `gpt-oss:20b`).
 
-Memory is tight. As of build c7 the Uthernet II build has about 300 bytes
-free below `$BA00` (the CoGS build about 1 KB), so keep the model list in
+Memory is tight. As of build c8 both builds have about 300 bytes free below
+`$BA00`, so keep the model list in
 aux memory or in the idle receive buffer rather than in main-memory BSS,
 and check both builds' `a2chat.map` after the change.
 
@@ -54,8 +54,9 @@ Otherwise it falls back to counting vertical blanks (`ip65_timer.s`, about
 16 ms per frame), which can time things but can't tell the time of day, hence
 `--:--`. To look into:
 
-- Whether the CoGS card can supply the time (a ProDOS clock driver, or a
-  command on the frame protocol, perhaps from NTP), and use it when present.
+- Done for CoGS in build c8 (works on a real card): `cogs_wall()` in
+  `clock.c` reads the card's `LOCALTIME` when no socket is open and sets the
+  ProDOS date and time. The timezone comes from the card's own settings.
 - Whether the vertical-blank counter is right on every machine A2CHAT
   supports. `$C019` behaves differently on the IIc and IIgs than on the IIe,
   and every network timeout depends on this counter.
