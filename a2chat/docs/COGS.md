@@ -7,10 +7,10 @@ with `COGS=1` makes it use a CoGS co-processor/network card instead.
 make COGS=1            # same targets and outputs as the Uthernet build
 ```
 
-Without `COGS=1` the build is unchanged (byte-identical binary). Both
-variants write the same output names; switching between `make` and
-`make COGS=1` relinks automatically, so check which one you last built
-before copying a disk image.
+Without `COGS=1` the build is the usual Uthernet II one; the CoGS code is
+not compiled in. Both variants write the same output names; switching
+between `make` and `make COGS=1` relinks automatically, so check which one
+you last built before copying a disk image.
 
 ## What is different
 

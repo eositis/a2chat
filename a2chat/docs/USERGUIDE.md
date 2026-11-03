@@ -75,7 +75,7 @@ If Ethernet fails, A2CHAT continues **offline**. `/cat`, `/config`, `/about`, `/
 
 Type after the inverse `You` label. After Return, the next line is the `AI` reply. When the pane fills, text **scrolls up**; it does not wrap back to the top. About 128 lines (~6 screens) stay in aux RAM (`$0800`). Open-Apple + up/down (or the arrow keys) pages through that scrollback while idle; any typed character returns to the live prompt. `/new` clears the pane and the RAM ring. History in `A2CHAT.LOG` is unchanged.
 
-Open-Apple + `.` (or the IP65 abort key) can interrupt a transfer.
+Open-Apple + `.` or Ctrl-C can interrupt a transfer. While A2CHAT is connecting, only Ctrl-C works (Esc does not).
 
 ## Config (`A2CHAT.CFG`)
 
