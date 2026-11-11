@@ -175,9 +175,13 @@ void w5100_config(void)
     }
     wait_cr();
 
-    /* One connect attempt is about 30 seconds: 200ms * (149+1). */
+    /* One connect attempt is about 30 seconds. RTR is 200ms; the chip
+     * doubles it on each TCP retry up to 6.4s, so 8 retries give
+     * 0.2+0.4+...+6.4+6.4+6.4 = 31.8s (WIZnet's worked example). ARP
+     * does not double: 200ms * (8+1) = 1.8s. The old 149 retries
+     * meant about 15 minutes when SYNs went unanswered. */
     set_word(0x0017, 0x07D0);
-    set_byte(0x0019, 149);
+    set_byte(0x0019, 8);
 
     for (mac_i = 0; mac_i < 6; mac_i++) {
       set_byte(0x0009 + mac_i, cfg_mac[mac_i]);

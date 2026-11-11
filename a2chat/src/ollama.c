@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <ip65.h>
 #include <apple2_filetype.h>
+#ifdef A2CHAT_COGS
+#include "cogs.h"
+#endif
 
 static uint16_t ans_len;
 static uint8_t ans_n;
@@ -230,7 +233,8 @@ static int write_body(const char *user_text, const char *attach_path, uint16_t *
     off = 0;
     off = aux_add_str(off, "{\"model\":\"");
     off = json_escape_aux(off, g_cfg.model, (unsigned)strlen(g_cfg.model));
-    off = aux_add_str(off, "\",\"stream\":true,\"think\":false,\"messages\":[");
+    off = aux_add_str(off, g_cfg.stream ? "\",\"stream\":true" : "\",\"stream\":false");
+    off = aux_add_str(off, ",\"think\":false,\"messages\":[");
     off = aux_add_str(off, "{\"role\":\"system\",\"content\":\"");
     if (plen) {
         unsigned i = 0;
@@ -328,9 +332,17 @@ int ollama_send(const char *user_text, const char *attach_path)
         return -1;
     }
     addr = parse_dotted_quad(g_cfg.host);
+#ifdef A2CHAT_COGS
+    if (!g_cfg.host[0]) {   /* the CoGS card resolves hostnames */
+#else
     if (!addr) {
+#endif
         bas_lst = 0;
+#ifdef A2CHAT_COGS
+        ui_print("Set HOST= in A2CHAT.CFG");
+#else
         ui_print("HOST must be dotted IPv4 in v1");
+#endif
         ui_nl();
         return -1;
     }
@@ -359,7 +371,7 @@ int ollama_send(const char *user_text, const char *attach_path)
     ans_len = 0;
     ans_n = 0;
     js.user = 0;
-    ui_status("Talking...");
+    ui_status(g_cfg.stream ? "Talking..." : "Waiting for the whole reply...");
     js.pay = 0;
     aux_mainbank();
     /* Log the prompt before TCP. The POST reuses output_buffer, which is
@@ -371,6 +383,9 @@ int ollama_send(const char *user_text, const char *attach_path)
                        jlen, jsonscan_on_bytes, &js);
     ans_flush();
     ui_flush();
+#ifdef A2CHAT_COGS
+    cogs_report();
+#endif
     if (rc < 0) {
         ui_print("\n");
         ui_print(g_http_err[0] ? g_http_err : "HTTP error");
@@ -393,34 +408,52 @@ int ollama_send(const char *user_text, const char *attach_path)
     return 0;
 }
 
+/* Print "label [current]: " and read the answer into buf. */
+static void cfg_ask(const char *label, const char *cur, char *buf)
+{
+    ui_print(label);
+    ui_print(" [");
+    ui_print(cur);
+    ui_print("]: ");
+    ui_prompt(buf, 40);
+}
+
 static void cfg_edit(void)
 {
     char buf[40];
-    ui_print("Host [");
-    ui_print(g_cfg.host);
-    ui_print("]: ");
-    ui_prompt(buf, sizeof(buf));
+    char num[8];
+    uint8_t old_slot = g_cfg.slot;
+
+    cfg_ask("Host", g_cfg.host, buf);
     if (buf[0]) {
         strncpy(g_cfg.host, buf, sizeof(g_cfg.host) - 1);
     }
-    ui_print("Port: ");
-    ui_prompt(buf, sizeof(buf));
+    sprintf(num, "%u", (unsigned)g_cfg.port);
+    cfg_ask("Port", num, buf);
     if (buf[0]) {
         g_cfg.port = (uint16_t)atoi(buf);
     }
-    ui_print("Model: ");
-    ui_prompt(buf, sizeof(buf));
+    cfg_ask("Model", g_cfg.model, buf);
     if (buf[0]) {
         strncpy(g_cfg.model, buf, sizeof(g_cfg.model) - 1);
     }
-    ui_print("Slot 0=auto: ");
-    ui_prompt(buf, sizeof(buf));
+    sprintf(num, "%u", (unsigned)g_cfg.slot);
+    cfg_ask("Slot 0=auto", num, buf);
     if (buf[0]) {
         g_cfg.slot = (uint8_t)atoi(buf);
     }
+    cfg_ask("Stream 1=on 0=off", g_cfg.stream ? "1" : "0", buf);
+    if (buf[0]) {
+        g_cfg.stream = (uint8_t)(atoi(buf) != 0);
+    }
     cfg_save(&g_cfg, self_path("A2CHAT.CFG"));
+    ui_redraw_chrome();
     ui_print("Saved config");
     ui_nl();
+    if (g_cfg.slot != old_slot) {
+        ui_print("New slot takes effect when A2CHAT restarts");
+        ui_nl();
+    }
 }
 
 int cmd_handle(char *line)
@@ -472,6 +505,7 @@ int cmd_handle(char *line)
         if (arg[0]) {
             strncpy(g_cfg.model, arg, sizeof(g_cfg.model) - 1);
             cfg_save(&g_cfg, self_path("A2CHAT.CFG"));
+            ui_redraw_chrome();
         }
         ui_print(g_cfg.model);
         ui_nl();

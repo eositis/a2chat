@@ -3,6 +3,11 @@
 #include <stdio.h>
 #include <ctype.h>
 
+/* The Apple build parses replies with jsonscan_feed_buf(), which matches
+ * keys with counters and calls jsonscan_feed() only inside reply text. The
+ * byte-at-a-time key window, tool calls and file payloads below are used by
+ * the host build and its tests only. */
+#ifdef A2CHAT_HOST
 static int win_eq(const struct jsonscan *j, const char *suf, uint8_t n)
 {
     unsigned i;
@@ -23,12 +28,10 @@ static int win_eq(const struct jsonscan *j, const char *suf, uint8_t n)
     return 1;
 }
 
-#ifdef A2CHAT_HOST
 static int win_ends(const struct jsonscan *j, const char *suf)
 {
     return win_eq(j, suf, (uint8_t)strlen(suf));
 }
-#endif
 
 static void win_add(struct jsonscan *j, char ch)
 {
@@ -38,6 +41,7 @@ static void win_add(struct jsonscan *j, char ch)
         j->winlen++;
     }
 }
+#endif
 
 static void emit_content(struct jsonscan *j, char ch)
 {
@@ -46,6 +50,83 @@ static void emit_content(struct jsonscan *j, char ch)
     }
 }
 
+/* Latin-1 letters U+00C0..U+00FF without their accents. */
+static const char latin1[] =
+    "AAAAAAACEEEEIIIIDNOOOOOxOUUUUYTsaaaaaaaceeeeiiiidnooooo/ouuuuyty";
+
+/* Reply text is shown and saved as 7-bit ASCII. Emit one code point as its
+ * nearest ASCII: curly quotes, dashes, ellipsis, odd spaces and accented
+ * Latin-1 letters map over; anything else becomes '?'. */
+static void emit_cp(struct jsonscan *j, uint16_t cp)
+{
+    char c = '?';
+    uint8_t lo = (uint8_t)cp;
+
+    if (cp < 0x80) {
+        c = (char)cp;
+    } else if (cp >= 0xC0 && cp <= 0xFF) {
+        c = latin1[lo - 0xC0];
+    } else if (cp == 0xA0) {
+        c = ' ';
+    } else if (cp == 0xAB || cp == 0xBB) {
+        c = '"';
+    } else if ((cp >> 8) == 0x20) {
+        if (lo <= 0x0A || lo == 0x2F) {
+            c = ' ';
+        } else if (lo <= 0x0F) {
+            return;                     /* zero-width marks */
+        } else if (lo <= 0x15) {
+            c = '-';
+        } else if (lo >= 0x18 && lo <= 0x1B) {
+            c = '\'';
+        } else if (lo >= 0x1C && lo <= 0x1F) {
+            c = '"';
+        } else if (lo == 0x22) {
+            c = '*';
+        } else if (lo == 0x26) {
+            emit_content(j, '.');
+            emit_content(j, '.');
+            c = '.';
+        }
+    } else if (cp == 0x2212) {
+        c = '-';
+    } else if (cp == 0xFEFF || (cp & 0xFC00) == 0xDC00) {
+        return;     /* byte-order mark; low half of a \u surrogate pair */
+    }
+    emit_content(j, c);
+}
+
+/* One raw byte >= $80 of a UTF-8 sequence in reply text. */
+static void utf8_byte(struct jsonscan *j, uint8_t b)
+{
+    if (b < 0xC0) {
+        if (!j->u8_need) {
+            emit_content(j, '?');
+            return;
+        }
+        j->u8_cp = (uint16_t)((j->u8_cp << 6) | (b & 0x3F));
+        if (--j->u8_need == 0) {
+            emit_cp(j, j->u8_big ? 0xFFFFu : j->u8_cp);
+        }
+        return;
+    }
+    if (j->u8_need) {
+        emit_content(j, '?');           /* previous sequence cut short */
+    }
+    j->u8_big = 0;
+    if (b < 0xE0) {
+        j->u8_need = 1;
+        j->u8_cp = b & 0x1F;
+    } else if (b < 0xF0) {
+        j->u8_need = 2;
+        j->u8_cp = b & 0x0F;
+    } else {
+        j->u8_need = 3;
+        j->u8_big = 1;
+    }
+}
+
+#ifdef A2CHAT_HOST
 static void pay_ch(struct jsonscan *j, char ch)
 {
     if (j->pay && j->pay_bytes < 65535u) {
@@ -53,6 +134,7 @@ static void pay_ch(struct jsonscan *j, char ch)
         j->pay_bytes++;
     }
 }
+#endif
 
 static char unescape(struct jsonscan *j, char ch)
 {
@@ -99,6 +181,7 @@ static void end_num(struct jsonscan *j)
 
 void jsonscan_feed(struct jsonscan *j, char ch)
 {
+#ifdef A2CHAT_HOST
     if (j->mode == JS_NUM_OFFSET || j->mode == JS_NUM_LENGTH ||
         j->mode == JS_NUM_AUX || j->mode == JS_NUM_EVAL ||
         j->mode == JS_NUM_PROMPT_EVAL) {
@@ -115,6 +198,9 @@ void jsonscan_feed(struct jsonscan *j, char ch)
     if (j->mode == JS_MSG_CONTENT || j->mode == JS_TOOL_NAME ||
         j->mode == JS_ARG_PATH || j->mode == JS_ARG_TYPE ||
         j->mode == JS_ARG_CONTENT || j->mode == JS_ARG_HEX) {
+#else
+    if (j->mode == JS_MSG_CONTENT) {
+#endif
         if (j->unicode_n) {
             char h = (char)tolower((unsigned char)ch);
             j->unicode <<= 4;
@@ -125,14 +211,26 @@ void jsonscan_feed(struct jsonscan *j, char ch)
             }
             j->unicode_n--;
             if (j->unicode_n == 0) {
-                char out = (j->unicode < 128) ? (char)j->unicode : '?';
                 if (j->mode == JS_MSG_CONTENT) {
-                    emit_content(j, out);
-                } else if (j->mode == JS_ARG_CONTENT || j->mode == JS_ARG_HEX) {
-                    pay_ch(j, out);
+                    emit_cp(j, j->unicode);
                 }
+#ifdef A2CHAT_HOST
+                else if (j->mode == JS_ARG_CONTENT || j->mode == JS_ARG_HEX) {
+                    pay_ch(j, (j->unicode < 128) ? (char)j->unicode : '?');
+                }
+#endif
             }
             return;
+        }
+        if (j->mode == JS_MSG_CONTENT && !j->escape) {
+            if ((uint8_t)ch & 0x80) {
+                utf8_byte(j, (uint8_t)ch);
+                return;
+            }
+            if (j->u8_need) {
+                j->u8_need = 0;
+                emit_content(j, '?');   /* sequence cut short */
+            }
         }
         if (j->escape) {
             char out = unescape(j, ch);
@@ -153,7 +251,9 @@ void jsonscan_feed(struct jsonscan *j, char ch)
 
         if (j->mode == JS_MSG_CONTENT) {
             emit_content(j, ch);
-        } else if (j->mode == JS_TOOL_NAME) {
+        }
+#ifdef A2CHAT_HOST
+        else if (j->mode == JS_TOOL_NAME) {
             if (j->tool_nlen < A2CHAT_TOOL_NAME_MAX - 1) {
                 j->tool_name[j->tool_nlen++] = ch;
                 j->tool_name[j->tool_nlen] = 0;
@@ -172,9 +272,11 @@ void jsonscan_feed(struct jsonscan *j, char ch)
         } else if (j->mode == JS_ARG_CONTENT || j->mode == JS_ARG_HEX) {
             pay_ch(j, ch);
         }
+#endif
         return;
     }
 
+#ifdef A2CHAT_HOST
     win_add(j, ch);
 
     if (ch == ':') {
@@ -199,15 +301,12 @@ void jsonscan_feed(struct jsonscan *j, char ch)
             return;
         }
     }
-#ifdef A2CHAT_HOST
     if (win_ends(j, "\"arguments\"")) {
         j->seen_arguments = 1;
     }
     if (win_ends(j, "tool_calls")) {
         j->seen_tool_calls = 1;
     }
-#endif
-#ifdef A2CHAT_HOST
     if (win_ends(j, "\"name\":\"")) {
         if (!j->seen_tool_calls) {
             return;
@@ -306,13 +405,14 @@ void jsonscan_feed_buf(struct jsonscan *j, const char *p, unsigned n)
             end_num(j);
             continue;
         }
-        if (j->mode == JS_MSG_CONTENT && !j->escape && !j->unicode_n) {
+        if (j->mode == JS_MSG_CONTENT && !j->escape && !j->unicode_n &&
+            !j->u8_need) {
             unsigned k = 0;
             const char *q = p + i;
 
             while (i + k < n) {
                 char c = q[k];
-                if (c == '"' || c == '\\') {
+                if (c == '"' || c == '\\' || ((uint8_t)c & 0x80)) {
                     break;
                 }
                 k++;
@@ -342,10 +442,12 @@ void jsonscan_init(struct jsonscan *j)
     evalpos = 0;
 }
 
+#ifdef A2CHAT_HOST
 void jsonscan_on_byte(char ch, void *user)
 {
     jsonscan_feed((struct jsonscan *)user, ch);
 }
+#endif
 
 void jsonscan_on_bytes(const char *p, unsigned n, void *user)
 {
@@ -470,12 +572,7 @@ unsigned json_escape_len(const char *s, unsigned n)
 }
 #endif
 
-#ifndef A2CHAT_HOST
-void json_write_tools(FILE *f)
-{
-    (void)f;
-}
-#else
+#ifdef A2CHAT_HOST
 static const char TOOLS_JSON[] =
     "\"tools\":["
     "{\"type\":\"function\",\"function\":{\"name\":\"list_dir\","
@@ -502,7 +599,6 @@ void json_write_tools(FILE *f)
     fputs("],", f);
     fputs(TOOLS_JSON, f);
 }
-#endif
 
 void json_write_prelude(FILE *f, const char *model)
 {
@@ -515,3 +611,4 @@ void json_write_epilogue(FILE *f)
 {
     fputc('}', f);
 }
+#endif

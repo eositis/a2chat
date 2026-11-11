@@ -49,7 +49,7 @@ Copy `a2chat.po` (140K) or `a2chat.hdv` (8MB) onto a floppy, SmartPort image, or
 
 **If you rebuilt with `make` / `make disk` / `make hd`:** the image always gets the *sample* `cfg/A2CHAT.CFG`. After copying the new image to the Apple, restore your real `HOST`, `MODEL`, `PREFIX`, and static `IP` if you use them.
 
-Edit `A2CHAT.CFG` with any ProDOS text editor, or from inside A2CHAT with `/config` (host, port, model, slot only — PREFIX and IP are still edited in the file).
+Edit `A2CHAT.CFG` with any ProDOS text editor, or from inside A2CHAT with `/config` (host, port, model, slot and stream only — PREFIX and IP are still edited in the file). Each prompt shows the current value in brackets; press Return to keep it.
 
 `A2CHAT.TXT` and `A2SOFT.TXT` are sent as the system prompt on every chat. `A2CHAT.TXT` is the short instruction. `A2SOFT.TXT` is the Applesoft reference (line numbers, no `ELSE` or `WHILE`, and a single ```basic fence around a program). Edit either file next to the program. Changes apply on the next message. If `A2CHAT.TXT` is missing, A2CHAT uses a short built-in default and still sends `A2SOFT.TXT` when that file is present.
 
@@ -57,7 +57,7 @@ Edit `A2CHAT.CFG` with any ProDOS text editor, or from inside A2CHAT with `/conf
 
 1. Boot the volume. You should get 80-column A2CHAT, not Applesoft.
 2. The top inverse bar shows host, port, model, slot, and `Conn` or `----`. After a reply it shows the token count (for example `31 tokens`).
-3. Startup prints the config path, the data directory, **Clock P8** (or `MFMS` / `JIFFY`), wall time, the Apple IP, and an Ollama probe.
+3. Startup prints the config path, the data directory, **Clock P8** (or `MFMS` / `COGS` / `JIFFY`), wall time, the Apple IP, and an Ollama probe.
 4. **Connection established** means HTTP reached Ollama. If the first connect does not finish in about 30 seconds, A2CHAT retries twice.
 5. Type a question and press Return, or type a slash command from the help row.
 
@@ -75,7 +75,7 @@ If Ethernet fails, A2CHAT continues **offline**. `/cat`, `/config`, `/about`, `/
 
 Type after the inverse `You` label. After Return, the next line is the `AI` reply. When the pane fills, text **scrolls up**; it does not wrap back to the top. About 128 lines (~6 screens) stay in aux RAM (`$0800`). Open-Apple + up/down (or the arrow keys) pages through that scrollback while idle; any typed character returns to the live prompt. `/new` clears the pane and the RAM ring. History in `A2CHAT.LOG` is unchanged.
 
-Open-Apple + `.` (or the IP65 abort key) can interrupt a transfer.
+Open-Apple + `.` or Ctrl-C can interrupt a transfer. While A2CHAT is connecting, only Ctrl-C works (Esc does not).
 
 ## Config (`A2CHAT.CFG`)
 
@@ -92,8 +92,9 @@ Lines are `KEY=value`. Unknown keys are ignored.
 | `MAXHIST` | Bytes of `A2CHAT.LOG` sent with each chat POST |
 | `MAXREAD` / `MAXWRITE` | Size caps for file tools |
 | `HISTCAP` | Compact the log when it grows past this |
+| `STREAM` | `1` shows the reply word by word as the model writes it. `0` waits and shows the whole reply at once, which sends far less data. Default `1`, or `0` on the CoGS build. |
 
-`/config` saves host, port, model, and slot into `A2CHAT.CFG`. If you change slot or IP, quit and run A2CHAT again so Ethernet re-inits.
+`/config` saves host, port, model, slot, and stream into `A2CHAT.CFG` and updates the title bar at once. If you change slot or IP, quit and run A2CHAT again so Ethernet re-inits.
 
 Use a `PREFIX` on a larger volume when you want notes and logs off the 140K program disk. Create that directory in ProDOS first.
 
@@ -101,7 +102,7 @@ Use a `PREFIX` on a larger volume when you want notes and logs off the 140K prog
 
 | Command | Also | Action |
 |---------|------|--------|
-| `/config` | `/c` | Edit host, port, model, slot; save CFG |
+| `/config` | `/c` | Edit host, port, model, slot, stream; save CFG |
 | `/ping` | `/p` | Re-probe Ollama |
 | `/cat` | | List PREFIX, or the current ProDOS directory if PREFIX is empty |
 | `/cat PATH` | | List that directory. `/DEVTOOLS/A2CHAT` is a full path; `CAL2` is a name in the current directory |
@@ -158,7 +159,7 @@ Disk is slow. Short chats should finish in a few seconds of Apple-side work plus
 
 POST body and the streamed answer use **32K of aux RAM** (`$4000–$BFFF`). After each reply the top bar shows Ollama `eval_count` as `31 tokens`.
 
-Wall clock on the help row is MegaFlash time when that card answers (`MFMS`). Otherwise it is ProDOS hour and minute (`P8`), shown as `HH:MM`. Clock-card IRQs are left masked.
+Wall clock on the help row is MegaFlash time when that card answers (`MFMS`). Otherwise it is ProDOS hour and minute (`P8`), shown as `HH:MM`. The CoGS build with no other clock asks the card (`COGS`): its internet time plus the timezone offset set on the card's own config screen, which does not change for daylight saving by itself. It shows `--:--` until the card has the time, and also sets the ProDOS date, so log entries and files written by `/save` are dated. `JIFFY` means no clock was found. Clock-card IRQs are left masked.
 
 Numbers from the B7–B13 bring-up (same LAN, `llama3.2:3b`) are in [PERFORMANCE.md](PERFORMANCE.md).
 

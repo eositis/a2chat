@@ -61,6 +61,11 @@ int main(int argc, char *argv[])
         ui_print("Offline");
         ui_nl();
     }
+#ifdef A2CHAT_COGS
+    else {
+        clock_cogs();
+    }
+#endif
     ui_redraw_chrome();
     if (cfg_ok == 0) {
         ui_print("Config: ");
