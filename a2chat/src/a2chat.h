@@ -6,16 +6,16 @@
 #include <stdio.h>
 #include <stddef.h>
 
-#define A2CHAT_BUILD 75
+#define A2CHAT_BUILD 76
 /* Increment A2CHAT_BUILD, A2CHAT_BUILD_STR, and A2CHAT_DATE on every
  * program change so the help row identifies the binary that is running.
- * make BUILD_TAG=c5 marks test builds: the help row then shows B75c5. */
+ * make BUILD_TAG=c5 marks test builds: the help row then shows B76c5. */
 #ifdef A2CHAT_BUILD_TAG
-#define A2CHAT_BUILD_STR "75" A2CHAT_BUILD_TAG
+#define A2CHAT_BUILD_STR "76" A2CHAT_BUILD_TAG
 #else
-#define A2CHAT_BUILD_STR "75"
+#define A2CHAT_BUILD_STR "76"
 #endif
-#define A2CHAT_VERSION "1.3"
+#define A2CHAT_VERSION "1.4"
 #define A2CHAT_DATE "11 November 2026"
 /* API= does not follow the port. 0 discovers OpenAI, then Ollama. */
 #define A2CHAT_API_AUTO 0
