@@ -12,6 +12,14 @@
         .include        "zeropage.inc"
         .include        "apple2.inc"
 
+; cc65 after 2.19 calls the C stack pointer c_sp; the Makefile passes
+; -D CC65_C_SP when this cc65 does.
+.ifdef CC65_C_SP
+.define CSP c_sp
+.else
+.define CSP sp
+.endif
+
         .segment        "STARTUP"
 
         ldx     #$FF
@@ -26,7 +34,7 @@
         .code
 
 init:   ldx     #zpspace-1
-:       lda     sp,x
+:       lda     CSP,x
         sta     zpsave,x
         dex
         bpl     :-
@@ -46,8 +54,8 @@ init:   ldx     #zpspace-1
         bne     setsp
 basic:  lda     HIMEM
         ldx     HIMEM+1
-setsp:  sta     sp
-        stx     sp+1
+setsp:  sta     CSP
+        stx     CSP+1
 
         ldx     #<quit
         lda     #>quit
@@ -59,9 +67,9 @@ setsp:  sta     sp
         sei
         cld
         lda     #<$BF00
-        sta     sp
+        sta     CSP
         lda     #>$BF00
-        sta     sp+1
+        sta     CSP+1
         sei
         cld
         rts
@@ -90,7 +98,7 @@ _prodos_quit:
         cld
         ldx     #zpspace-1
 :       lda     zpsave,x
-        sta     sp,x
+        sta     CSP,x
         dex
         bpl     :-
         ; 40-col / main bank. Do not $C080/$C082: that unmaps ProDOS LC.

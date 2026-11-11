@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+Changes since 1.3 (8 October 2026, build B69).
+
+### Networking
+
+- New CoGS network card build (`make COGS=1`); see [docs/COGS.md](docs/COGS.md). The card does DHCP and DNS, so `HOST=` may be a hostname. Tested on a real CoGS card.
+- A W5100 connect to an address that never answers now gives up after about 30 seconds, as 1.3 intended. With 149 retries it took about 15 minutes per try, so startup hung for most of an hour when `HOST=` was unreachable. Ctrl-C still stops it at once.
+- New `STREAM=` setting: 1 shows replies word by word, 0 waits for the whole reply. The default is 1 on Uthernet II and 0 on CoGS, whose current firmware drops data on long streamed replies.
+
+### Screen
+
+- UTF-8 and `\uXXXX` escapes in replies are shown as ASCII (curly quotes, dashes, ellipsis, accented letters); anything else becomes `?`.
+- `/config` shows each current value and keeps it on Return, and has a prompt for `STREAM`. The title bar redraws after saving and after `/model NAME`.
+- The CoGS build reads the time from the card when there is no other clock (`Clock COGS`), and sets the ProDOS date so saved files are dated.
+
+### Build
+
+- `IP65=` defaults to a checkout next to the repo (`../ip65` from the repo root), and make stops with a message when it is missing. `JAVA` falls back to the PATH, and `AC=` accepts a native AppleCommander. Disk-image temp files go in `build/`.
+- `crt0.s` builds with cc65 2.18 (`sp`) and newer (`c_sp`).
+- `make BUILD_TAG=c5` marks test builds (`B69c5` on the help row).
+
 ## 1.3 — 8 October 2026 (build B69)
 
 Changes since 1.2 (27 September 2026, build B64).

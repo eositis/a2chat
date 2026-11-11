@@ -12,3 +12,7 @@ a2chat/tests/test_host
 a2chat/src/*.o
 pico6502/setup_picoZ80.sh
 pico6502/tzpuPico/
+a2chat/a.out
+a2chat/*.o
+a2chat/a2chat-cogs*
+a2chat/a2chat-uthernet*

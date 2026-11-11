@@ -8,6 +8,9 @@
 
 #include "a2chat.h"
 #include "w5100.h"
+#ifdef A2CHAT_COGS
+#include "cogs.h"
+#endif
 #include <ip65.h>
 #include <string.h>
 #include <stdio.h>
@@ -153,6 +156,46 @@ static void feed_byte(char ch)
     feed_body(ch);
 }
 
+#ifdef A2CHAT_COGS
+/* CoGS: pop up to one window of the pending DATA payload from the card's
+ * DATA register, then hand it to the header / body parser. */
+static uint8_t pump_rx(void)
+{
+    uint16_t n;
+    uint8_t i;
+
+    n = w5100_receive_request();
+    if (!n) {
+        if (!w5100_connected()) {
+            rx_eof = 1;
+        }
+        return 0;
+    }
+    if (n > sizeof(rxwin)) {
+        n = sizeof(rxwin);
+    }
+    if (cogs_rx((uint8_t *)rxwin, (uint8_t)n)) {
+        rx_eof = 1;             /* card stalled; cogs_report() says so */
+        return 0;
+    }
+    i = 0;
+    while (i < (uint8_t)n && !rx_have_hdr) {
+        feed_byte(rxwin[i]);
+        i++;
+    }
+    if (i < (uint8_t)n) {
+        if (rx_chunked || !rx_on_bytes) {
+            while (i < (uint8_t)n) {
+                feed_byte(rxwin[i]);
+                i++;
+            }
+        } else {
+            rx_on_bytes(rxwin + i, (unsigned)((uint8_t)n - i), rx_user);
+        }
+    }
+    return 1;
+}
+#else
 static uint8_t pump_rx(void)
 {
     volatile uint8_t *data = w5100_data;
@@ -196,6 +239,8 @@ static uint8_t pump_rx(void)
     return 1;
 }
 
+#endif /* A2CHAT_COGS */
+
 static void rx_reset(void (*on_bytes)(const char *p, unsigned n, void *user),
                      void *user, char *accum, uint16_t accum_max)
 {
@@ -218,6 +263,16 @@ static void rx_reset(void (*on_bytes)(const char *p, unsigned n, void *user),
     }
 }
 
+#ifdef A2CHAT_COGS
+static int send_all(const uint8_t *p, uint16_t len)
+{
+    if (ui_aborted()) {
+        w5100_disconnect();
+        return -1;
+    }
+    return cogs_send(p, len);
+}
+#else
 static int send_all(const uint8_t *p, uint16_t len)
 {
     volatile uint8_t *data = w5100_data;
@@ -249,6 +304,8 @@ static int send_all(const uint8_t *p, uint16_t len)
     }
     return 0;
 }
+
+#endif /* A2CHAT_COGS */
 
 static int send_aux(uint16_t off, uint16_t total)
 {
@@ -380,11 +437,35 @@ static int connect_30(uint32_t addr, uint16_t port)
             return -1;
         }
         ui_status(try ? "Retry connect..." : "Connecting...");
+#ifdef A2CHAT_COGS
+        /* The card resolves names itself, so HOST= may be a hostname. */
+        (void)addr;
+        if (w5100_connect_name(g_cfg.host, (uint8_t)strlen(g_cfg.host),
+                               port)) {
+            return 0;
+        }
+        w5100_disconnect();
+        {
+            uint8_t e = cogs_last_error();
+            /* DNS failures and refusals will not fix themselves. */
+            if (e == 2 || e == 4 || e == 1) {
+                break;
+            }
+        }
+#else
         if (w5100_connect_addr(addr, port)) {
             return 0;
         }
         w5100_disconnect();
+#endif
     }
+#ifdef A2CHAT_COGS
+    if (cogs_last_error()) {
+        sprintf(g_http_err, "TCP: %s",
+                cogs_strerror(cogs_last_error()));
+        return -1;
+    }
+#endif
     strcpy(g_http_err, "TCP connect failed");
     return -1;
 }

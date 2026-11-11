@@ -3,6 +3,7 @@
 ; MegaFlash ms if IIc+MF (same probe as mfclock.s); else VBL edges (~16 ms).
 ;
         .export         timer_init
+        .export         _timer_init
         .export         timer_read
         .export         timer_jiffy
         .export         _timer_jiffy
@@ -24,6 +25,7 @@ use_mf:         .res    1
         .code
 
 timer_init:
+_timer_init:
         lda     #0
         sta     current_time
         sta     current_time+1
