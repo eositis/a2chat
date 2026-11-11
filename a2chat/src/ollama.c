@@ -4,9 +4,7 @@
 #include <stdlib.h>
 #include <ip65.h>
 #include <apple2_filetype.h>
-#ifdef A2CHAT_COGS
-#include "cogs.h"
-#endif
+#include "nic.h"
 
 static uint16_t ans_len;
 static uint8_t ans_n;
@@ -234,7 +232,14 @@ static int write_body(const char *user_text, const char *attach_path, uint16_t *
     off = aux_add_str(off, "{\"model\":\"");
     off = json_escape_aux(off, g_cfg.model, (unsigned)strlen(g_cfg.model));
     off = aux_add_str(off, g_cfg.stream ? "\",\"stream\":true" : "\",\"stream\":false");
-    off = aux_add_str(off, ",\"think\":false,\"messages\":[");
+    /* llama.cpp rejects nothing it does not know, but "think" is Ollama's.
+     * OpenAI streams omit the token count unless this is set. */
+    if (!cfg_use_openai(&g_cfg)) {
+        off = aux_add_str(off, ",\"think\":false");
+    } else if (g_cfg.stream) {
+        off = aux_add_str(off, ",\"stream_options\":{\"include_usage\":true}");
+    }
+    off = aux_add_str(off, ",\"messages\":[");
     off = aux_add_str(off, "{\"role\":\"system\",\"content\":\"");
     if (plen) {
         unsigned i = 0;
@@ -332,17 +337,22 @@ int ollama_send(const char *user_text, const char *attach_path)
         return -1;
     }
     addr = parse_dotted_quad(g_cfg.host);
-#ifdef A2CHAT_COGS
-    if (!g_cfg.host[0]) {   /* the CoGS card resolves hostnames */
-#else
-    if (!addr) {
-#endif
+    if (nic_flags() & NIC_F_HOSTNAME) {
+        if (!g_cfg.host[0]) {
+            bas_lst = 0;
+            ui_print("Set HOST= in A2CHAT.CFG");
+            ui_nl();
+            return -1;
+        }
+    } else if (!addr) {
         bas_lst = 0;
-#ifdef A2CHAT_COGS
-        ui_print("Set HOST= in A2CHAT.CFG");
-#else
         ui_print("HOST must be dotted IPv4 in v1");
-#endif
+        ui_nl();
+        return -1;
+    }
+    if (api_prepare(addr, g_cfg.port) != 0) {
+        bas_lst = 0;
+        ui_print(g_http_err[0] ? g_http_err : "TCP connect failed");
         ui_nl();
         return -1;
     }
@@ -383,9 +393,7 @@ int ollama_send(const char *user_text, const char *attach_path)
                        jlen, jsonscan_on_bytes, &js);
     ans_flush();
     ui_flush();
-#ifdef A2CHAT_COGS
-    cogs_report();
-#endif
+    nic_report();
     if (rc < 0) {
         ui_print("\n");
         ui_print(g_http_err[0] ? g_http_err : "HTTP error");
@@ -396,11 +404,15 @@ int ollama_send(const char *user_text, const char *attach_path)
     {
         char line[16];
 
-        sprintf(line, "%u tokens", (unsigned)js.eval_count);
+        fmt_start(line, sizeof(line));
+        fmt_u(js.eval_count);
+        fmt_s(" tokens");
+        fmt_end();
         ui_set_perf(line);
         ui_redraw_chrome();
     }
-    if (!js.eval_count && ans_len) {
+    /* Ollama always ends with eval_count. llama.cpp often omits usage. */
+    if (!js.eval_count && ans_len && !cfg_use_openai(&g_cfg)) {
         ui_print("stream cut off");
         ui_nl();
     }
@@ -428,7 +440,9 @@ static void cfg_edit(void)
     if (buf[0]) {
         strncpy(g_cfg.host, buf, sizeof(g_cfg.host) - 1);
     }
-    sprintf(num, "%u", (unsigned)g_cfg.port);
+    fmt_start(num, sizeof(num));
+    fmt_u(g_cfg.port);
+    fmt_end();
     cfg_ask("Port", num, buf);
     if (buf[0]) {
         g_cfg.port = (uint16_t)atoi(buf);
@@ -437,7 +451,9 @@ static void cfg_edit(void)
     if (buf[0]) {
         strncpy(g_cfg.model, buf, sizeof(g_cfg.model) - 1);
     }
-    sprintf(num, "%u", (unsigned)g_cfg.slot);
+    fmt_start(num, sizeof(num));
+    fmt_u(g_cfg.slot);
+    fmt_end();
     cfg_ask("Slot 0=auto", num, buf);
     if (buf[0]) {
         g_cfg.slot = (uint8_t)atoi(buf);

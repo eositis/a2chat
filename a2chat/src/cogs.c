@@ -434,7 +434,15 @@ bool w5100_connect_addr(uint32_t addr, uint16_t port)
     char ip[16];
     const uint8_t *a = (const uint8_t *)&addr;
 
-    sprintf(ip, "%u.%u.%u.%u", a[0], a[1], a[2], a[3]);
+    fmt_start(ip, sizeof(ip));
+    fmt_u(a[0]);
+    fmt_c('.');
+    fmt_u(a[1]);
+    fmt_c('.');
+    fmt_u(a[2]);
+    fmt_c('.');
+    fmt_u(a[3]);
+    fmt_end();
     return w5100_connect_name(ip, (uint8_t)strlen(ip), port);
 }
 
@@ -516,22 +524,56 @@ void w5100_data_commit(bool do_send, uint16_t size)
     }
 }
 
+static void put_u32(unsigned long v)
+{
+    char tmp[10];
+    uint8_t n = 0;
+
+    do {
+        tmp[n++] = (char)('0' + (uint8_t)(v % 10ul));
+        v /= 10ul;
+    } while (v && n < sizeof(tmp));
+    while (n) {
+        fmt_c(tmp[--n]);
+    }
+}
+
 void cogs_report(void)
 {
     char msg[80];
+    uint16_t dt;
 
     /* Always shown while CoGS support is being tested. */
-    sprintf(msg, "CoGS B%s: %lu bytes in %u.%us, peak queue %u",
-            A2CHAT_BUILD_STR, (unsigned long)n_rx,
-            (unsigned)((uint16_t)(t_last - t_open) / 1000u),
-            (unsigned)((uint16_t)(t_last - t_open) % 1000u / 100u),
-            q_peak);
+    dt = (uint16_t)(t_last - t_open);
+    fmt_start(msg, sizeof(msg));
+    fmt_s("CoGS B");
+    fmt_s(A2CHAT_BUILD_STR);
+    fmt_s(": ");
+    put_u32(n_rx);
+    fmt_s(" bytes in ");
+    fmt_u(dt / 1000u);
+    fmt_c('.');
+    fmt_u((dt % 1000u) / 100u);
+    fmt_s("s, peak queue ");
+    fmt_u(q_peak);
+    fmt_end();
     ui_nl();
     ui_print(msg);
     ui_nl();
-    sprintf(msg, "  err %u (%s) resync %u drop %u bad %u irq %u",
-            (unsigned)n_err, n_err ? "see below" : "-", (unsigned)n_resync,
-            n_drop, (unsigned)n_bad, (unsigned)n_irq);
+    fmt_start(msg, sizeof(msg));
+    fmt_s("  err ");
+    fmt_u(n_err);
+    fmt_s(" (");
+    fmt_s(n_err ? "see below" : "-");
+    fmt_s(") resync ");
+    fmt_u(n_resync);
+    fmt_s(" drop ");
+    fmt_u(n_drop);
+    fmt_s(" bad ");
+    fmt_u(n_bad);
+    fmt_s(" irq ");
+    fmt_u(n_irq);
+    fmt_end();
     ui_print(msg);
     ui_nl();
     if (n_err) {

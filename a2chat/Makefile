@@ -28,21 +28,14 @@ endif
 CC65_ASMINC = $(shell cl65 --print-target-path)/../asminc
 CRT0FLAGS = $(if $(shell grep -s -w c_sp "$(CC65_ASMINC)/zeropage.inc"),-D CC65_C_SP)
 
-# make COGS=1 builds for the CoGS card instead of the Uthernet II.
-# The card does DHCP/DNS/TCP itself, so IP65 is only used for helpers.
-ifeq ($(COGS),1)
-CFLAGS += -DA2CHAT_COGS
-NETDRV = src/cogs.c
-NETASM = src/cogs_io.s
-else
-NETDRV = src/w5100.c
-NETASM =
-endif
+# Both cards are overlays (A2CHAT.UTH, A2CHAT.COG) loaded into the hole
+# below $BA00. COGS=1 is accepted and ignored so older commands still build.
 # make BUILD_TAG=c5 appends a tag to the build number on the help row.
 ifneq ($(BUILD_TAG),)
 CFLAGS += '-DA2CHAT_BUILD_TAG="$(BUILD_TAG)"'
 endif
-VARIANT = $(if $(filter 1,$(COGS)),cogs,uthernet)$(BUILD_TAG)
+VARIANT = nic$(BUILD_TAG)
+NIC_HOLE = 0x1780
 HD = a2chat.hdv
 
 SRCS = \
@@ -55,7 +48,7 @@ SRCS = \
 	src/prodos.c \
 	src/net.c \
 	src/http65.c \
-	$(NETDRV) \
+	src/nic.c \
 	src/ollama.c \
 	src/clock.c
 
@@ -68,15 +61,26 @@ ASM = \
 	src/chatmem.s \
 	src/basload.s \
 	src/close.s \
-	$(NETASM)
+	src/nic_jump.s
 
 IP65OVR = \
-	build/tcp_stub.o \
 	build/ip65_timer.o \
+	build/ip65_outbuf.o
+
+UTH_OBJS = \
+	build/uth_vec.o \
+	build/nic_uth.o \
+	build/w5100.o \
+	build/ethernet_a2chat.o \
+	build/tcp_stub.o \
 	build/ip65_icmp.o \
-	build/ip65_error.o \
-	build/ip65_outbuf.o \
-	build/ethernet_a2chat.o
+	build/ip65_error.o
+
+COG_OBJS = \
+	build/cog_vec.o \
+	build/nic_cog.o \
+	build/cogs.o \
+	build/cogs_io.o
 
 CA65IP = ca65 -t apple2enh -I$(IP65)/inc
 
@@ -126,8 +130,38 @@ build/ethernet_a2chat.o: src/ethernet_a2chat.s
 	mkdir -p build
 	$(CA65IP) -o $@ $<
 
-a2chat.bin A2CHAT.DTK A2CHAT.TOK: build/variant $(SRCS) src/a2chat.h src/cogs.h src/cogs.c src/cogs_io.s src/w5100.c $(ASM) $(IP65OVR) cfg/apple2enh-a2chat.cfg $(CUSTOMLIB) src/basdetok.s src/bastok.s src/basboot.s tools/mkovl.py tools/tokcfg.py tools/bootcfg.py tools/wraptok.py
-	$(CC65) -o $@ $(CFLAGS) --no-target-lib -m a2chat.map -Ln a2chat.lbl build/crt0.o $(IP65OVR) $(SRCS) $(ASM) $(IP65LIB) $(A2DRV) $(CUSTOMLIB)
+build/uth_vec.o: src/uth_vec.s
+	mkdir -p build
+	ca65 -t apple2enh -o $@ $<
+
+build/cog_vec.o: src/cog_vec.s
+	mkdir -p build
+	ca65 -t apple2enh -o $@ $<
+
+build/cogs_io.o: src/cogs_io.s
+	mkdir -p build
+	ca65 -t apple2enh -o $@ $<
+
+build/nic_uth.o: src/nic_uth.c src/a2chat.h src/w5100.h src/nic.h
+	mkdir -p build
+	$(CC65) -c -o $@ $(CFLAGS) $<
+
+build/nic_cog.o: src/nic_cog.c src/a2chat.h src/cogs.h src/w5100.h src/nic.h
+	mkdir -p build
+	$(CC65) -c -o $@ $(CFLAGS) $<
+
+build/w5100.o: src/w5100.c src/w5100.h
+	mkdir -p build
+	$(CC65) -c -o $@ $(CFLAGS) $<
+
+build/cogs.o: src/cogs.c src/cogs.h src/w5100.h src/a2chat.h
+	mkdir -p build
+	$(CC65) -c -o $@ $(CFLAGS) $<
+
+a2chat.bin A2CHAT.DTK A2CHAT.TOK A2CHAT.UTH A2CHAT.COG: build/variant $(SRCS) src/a2chat.h src/nic.h src/cogs.h src/cogs.c src/cogs_io.s src/w5100.c $(ASM) $(IP65OVR) $(UTH_OBJS) $(COG_OBJS) cfg/apple2enh-a2chat.cfg $(CUSTOMLIB) src/basdetok.s src/bastok.s src/basboot.s tools/mkovl.py tools/mknic.py tools/tokcfg.py tools/bootcfg.py tools/wraptok.py
+	$(CC65) -o a2chat.bin $(CFLAGS) --no-target-lib -m a2chat.map -Ln a2chat.lbl build/crt0.o $(IP65OVR) $(SRCS) $(ASM) $(IP65LIB) $(A2DRV) $(CUSTOMLIB)
+	python3 tools/mknic.py a2chat.lbl $(NIC_HOLE) A2CHAT.UTH build/uth.map build/uth.cfg -- $(UTH_OBJS) $(IP65LIB) $(A2DRV) $(CC65LIB)
+	python3 tools/mknic.py a2chat.lbl $(NIC_HOLE) A2CHAT.COG build/cog.map build/cog.cfg -- $(COG_OBJS) $(CC65LIB)
 	mkdir -p build
 	python3 tools/mkovl.py a2chat.lbl build/ovlsym.inc build/basovl.cfg
 	ca65 -t apple2enh -I build -o build/basdetok.o src/basdetok.s
@@ -161,7 +195,7 @@ disk: a2chat.po
 
 hd: a2chat.hdv
 
-a2chat.hdv: a2chat.bin A2CHAT.DTK A2CHAT.TOK A2CHAT.SYSTEM cfg/A2CHAT.CFG cfg/A2CHAT.TXT cfg/A2SOFT.TXT tools/mkprodos8.py tools/prodosboot.py
+a2chat.hdv: a2chat.bin A2CHAT.DTK A2CHAT.TOK A2CHAT.UTH A2CHAT.COG A2CHAT.SYSTEM cfg/A2CHAT.CFG cfg/A2CHAT.TXT cfg/A2SOFT.TXT tools/mkprodos8.py tools/prodosboot.py
 	$(if $(filter command line environment,$(origin AC)),,@test -f "$(AC_JAR)" || (echo "Missing AppleCommander: $(AC_JAR)"; exit 1))
 	@test -f "$(PRODOS_SRC)" || (echo "Missing ProDOS source image: $(PRODOS_SRC)"; exit 1)
 	rm -f $@ build/a2chat-pro140.po
@@ -177,10 +211,12 @@ a2chat.hdv: a2chat.bin A2CHAT.DTK A2CHAT.TOK A2CHAT.SYSTEM cfg/A2CHAT.CFG cfg/A2
 	$(AC) -ptx $@ A2SOFT.TXT < cfg/A2SOFT.TXT
 	$(AC) -p $@ A2CHAT.DTK BIN < A2CHAT.DTK
 	$(AC) -p $@ A2CHAT.TOK BIN < A2CHAT.TOK
+	$(AC) -p $@ A2CHAT.UTH BIN < A2CHAT.UTH
+	$(AC) -p $@ A2CHAT.COG BIN < A2CHAT.COG
 	$(AC) -ll $@
 	ls -l $@
 
-a2chat.po: a2chat.bin A2CHAT.DTK A2CHAT.TOK A2CHAT.SYSTEM cfg/A2CHAT.CFG cfg/A2CHAT.TXT cfg/A2SOFT.TXT tools/prodosboot.py
+a2chat.po: a2chat.bin A2CHAT.DTK A2CHAT.TOK A2CHAT.UTH A2CHAT.COG A2CHAT.SYSTEM cfg/A2CHAT.CFG cfg/A2CHAT.TXT cfg/A2SOFT.TXT tools/prodosboot.py
 	$(if $(filter command line environment,$(origin AC)),,@test -f "$(AC_JAR)" || (echo "Missing AppleCommander: $(AC_JAR)"; exit 1))
 	@test -f "$(PRODOS_SRC)" || (echo "Missing ProDOS source image: $(PRODOS_SRC)"; exit 1)
 	rm -f $@
@@ -195,9 +231,11 @@ a2chat.po: a2chat.bin A2CHAT.DTK A2CHAT.TOK A2CHAT.SYSTEM cfg/A2CHAT.CFG cfg/A2C
 	$(AC) -ptx $@ A2SOFT.TXT < cfg/A2SOFT.TXT
 	$(AC) -p $@ A2CHAT.DTK BIN < A2CHAT.DTK
 	$(AC) -p $@ A2CHAT.TOK BIN < A2CHAT.TOK
+	$(AC) -p $@ A2CHAT.UTH BIN < A2CHAT.UTH
+	$(AC) -p $@ A2CHAT.COG BIN < A2CHAT.COG
 	$(AC) -ll $@
 
 clean:
-	rm -f a2chat.bin a2chat.map a2chat.lbl A2CHAT.DTK A2CHAT.TOK A2CHAT.SYSTEM A2CHAT.CFG A2CHAT.TXT tests/test_host a2chat.po a2chat.hdv
+	rm -f a2chat.bin a2chat.map a2chat.lbl A2CHAT.DTK A2CHAT.TOK A2CHAT.UTH A2CHAT.COG A2CHAT.SYSTEM A2CHAT.CFG A2CHAT.TXT tests/test_host a2chat.po a2chat.hdv
 	rm -f src/*.o
 	rm -rf build

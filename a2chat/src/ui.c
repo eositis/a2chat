@@ -43,6 +43,74 @@ void __fastcall__ chat_unpack_row(uint8_t row, const unsigned char *src);
 void __fastcall__ chat_write(uint8_t col, uint8_t row, const char *s, uint8_t n);
 uint16_t timer_jiffy(void);
 
+static char *fmt_p;
+static char *fmt_b;
+static char *fmt_e;
+
+void fmt_start(char *d, unsigned cap)
+{
+    fmt_b = d;
+    fmt_p = d;
+    fmt_e = d + (cap ? cap - 1 : 0);
+}
+
+void fmt_c(char c)
+{
+    if (fmt_p < fmt_e) {
+        *fmt_p++ = c;
+    }
+}
+
+void fmt_s(const char *s)
+{
+    if (!s) {
+        return;
+    }
+    while (*s) {
+        fmt_c(*s++);
+    }
+}
+
+void fmt_u(unsigned v)
+{
+    char tmp[5];
+    uint8_t n = 0;
+
+    do {
+        tmp[n++] = (char)('0' + (uint8_t)(v % 10u));
+        v = v / 10u;
+    } while (v && n < sizeof(tmp));
+    while (n) {
+        fmt_c(tmp[--n]);
+    }
+}
+
+void fmt_pad(const char *s, unsigned width)
+{
+    unsigned n = 0;
+
+    if (!s) {
+        s = "";
+    }
+    while (s[n]) {
+        fmt_c(s[n++]);
+    }
+    while (n < width) {
+        fmt_c(' ');
+        n++;
+    }
+}
+
+void fmt_end(void)
+{
+    *fmt_p = 0;
+}
+
+unsigned fmt_len(void)
+{
+    return (unsigned)(fmt_p - fmt_b);
+}
+
 static unsigned text_base(uint8_t row)
 {
     return 0x400u + (unsigned)((row & 7) * 0x80 + (row >> 3) * 40);
@@ -357,15 +425,25 @@ void ui_redraw_chrome(void)
     __asm__("sei");
 #endif
 
+    fmt_start(line, sizeof(line));
+    fmt_s("A2CHAT  ");
+    fmt_s(g_cfg.host);
+    fmt_c(':');
+    fmt_u(g_cfg.port);
+    fmt_s("  ");
     if (have_perf) {
-        sprintf(line, "A2CHAT  %s:%u  %-10s %s",
-                g_cfg.host, (unsigned)g_cfg.port, g_cfg.model, g_status);
+        fmt_pad(g_cfg.model, 10);
+        fmt_c(' ');
+        fmt_s(g_status);
     } else {
-        sprintf(line, "A2CHAT  %s:%u  %-12s  Slot%u  [%s]",
-                g_cfg.host, (unsigned)g_cfg.port, g_cfg.model,
-                (unsigned)g_slot, g_net_ok ? "Conn" : "----");
+        fmt_pad(g_cfg.model, 12);
+        fmt_s("  Slot");
+        fmt_u(g_slot);
+        fmt_s("  [");
+        fmt_s(g_net_ok ? "Conn" : "----");
+        fmt_c(']');
     }
-    line[80] = 0;
+    fmt_end();
     gotoxy(0, CHROME_TOP);
     revers(1);
     cputs(line);
@@ -624,8 +702,17 @@ int ui_confirm(const char *path, const char *kind, unsigned bytes)
     if (chat_x != 0) {
         ui_nl();
     }
-    sprintf(line, "[%s %s  %u bytes ~%us] Y/N/E?", kind, path, bytes, sec);
-    line[80] = 0;
+    fmt_start(line, sizeof(line));
+    fmt_c('[');
+    fmt_s(kind);
+    fmt_c(' ');
+    fmt_s(path);
+    fmt_s("  ");
+    fmt_u(bytes);
+    fmt_s(" bytes ~");
+    fmt_u(sec);
+    fmt_s("s] Y/N/E?");
+    fmt_end();
     ui_print(line);
     gotoxy(chat_x, chat_y);
     c = (char)toupper((unsigned char)cgetc());

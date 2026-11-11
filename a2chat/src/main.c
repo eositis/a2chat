@@ -5,6 +5,7 @@
 #include <conio.h>
 #include <cc65.h>
 #include <ip65.h>
+#include "nic.h"
 
 static char pathbuf[A2CHAT_PATH_MAX];
 static char progdir[A2CHAT_PATH_MAX];
@@ -53,19 +54,17 @@ int main(int argc, char *argv[])
 #endif
 
     cfg_ok = cfg_load_first(&g_cfg);
-    g_slot = slot_resolve(g_cfg.slot);
     ui_init();
     clock_init();
-    ui_redraw_chrome();
-    if (net_init(g_slot) != 0) {
+    if (nic_bringup() != 0) {
         ui_print("Offline");
         ui_nl();
-    }
-#ifdef A2CHAT_COGS
-    else {
+    } else {
+        if (!g_stream_set) {
+            g_cfg.stream = nic_stream_default();
+        }
         clock_cogs();
     }
-#endif
     ui_redraw_chrome();
     if (cfg_ok == 0) {
         ui_print("Config: ");

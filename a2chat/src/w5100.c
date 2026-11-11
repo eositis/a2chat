@@ -88,9 +88,12 @@ static void set_byte(uint16_t addr, uint8_t data)
 
 static uint16_t get_word(uint16_t addr)
 {
-  set_addr(addr);
+  /* Same as set_word: one address setup per byte. Auto-increment is not
+   * reliable on every W5100, and a <256 byte reply then looks empty. */
+  uint8_t hi = get_byte(addr);
+  uint8_t lo = get_byte(addr + 1);
 
-  return *w5100_data << 8 | *w5100_data;
+  return ((uint16_t)hi << 8) | lo;
 }
 
 static void set_word(uint16_t addr, uint16_t data)
@@ -348,7 +351,7 @@ void w5100_disconnect(void)
 
 uint16_t w5100_data_request(bool do_send)
 {
-  // Socket x Command Register: Command Pending ?
+  /* Socket x Command Register: Command Pending ? */
   if (get_byte(SOCK_REG(0x01)))
   {
     return 0;

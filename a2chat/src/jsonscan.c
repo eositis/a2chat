@@ -354,9 +354,14 @@ void jsonscan_feed(struct jsonscan *j, char ch)
 /* Match position across receive windows. Reset in jsonscan_init. */
 static uint8_t keypos;
 static uint8_t evalpos;
+static uint8_t comppos;
+static uint8_t predpos;
 
 static const char key_content[] = "\"content\":\"";
 static const char key_eval[] = "\"eval_count\":";
+static const char key_comp[] = "\"completion_tokens\":";
+/* llama.cpp puts this in timings even when usage is omitted. */
+static const char key_pred[] = "\"predicted_n\":";
 
 void jsonscan_feed_buf(struct jsonscan *j, const char *p, unsigned n)
 {
@@ -384,9 +389,39 @@ void jsonscan_feed_buf(struct jsonscan *j, const char *p, unsigned n)
                     j->mode = JS_NUM_EVAL;
                     j->numlen = 0;
                     evalpos = 0;
+                    comppos = 0;
+                    predpos = 0;
                 }
             } else {
                 evalpos = (c == '"') ? 1 : 0;
+            }
+            if (j->mode == JS_SEEK) {
+                if (c == key_comp[comppos]) {
+                    comppos++;
+                    if (comppos == sizeof(key_comp) - 1) {
+                        j->mode = JS_NUM_EVAL;
+                        j->numlen = 0;
+                        comppos = 0;
+                        evalpos = 0;
+                        predpos = 0;
+                    }
+                } else {
+                    comppos = (c == '"') ? 1 : 0;
+                }
+            }
+            if (j->mode == JS_SEEK) {
+                if (c == key_pred[predpos]) {
+                    predpos++;
+                    if (predpos == sizeof(key_pred) - 1) {
+                        j->mode = JS_NUM_EVAL;
+                        j->numlen = 0;
+                        predpos = 0;
+                        evalpos = 0;
+                        comppos = 0;
+                    }
+                } else {
+                    predpos = (c == '"') ? 1 : 0;
+                }
             }
             continue;
         }
@@ -440,6 +475,8 @@ void jsonscan_init(struct jsonscan *j)
     memset(j, 0, sizeof(*j));
     keypos = 0;
     evalpos = 0;
+    comppos = 0;
+    predpos = 0;
 }
 
 #ifdef A2CHAT_HOST
@@ -544,7 +581,16 @@ void json_escape_fwrite(FILE *f, const char *s, unsigned n)
             fputc('\\', f);
             fputc('t', f);
         } else if (c < 32) {
+#ifdef A2CHAT_HOST
             fprintf(f, "\\u%04x", c);
+#else
+            {
+                static const char hexd[] = "0123456789abcdef";
+                fputs("\\u00", f);
+                fputc(hexd[c >> 4], f);
+                fputc(hexd[c & 15], f);
+            }
+#endif
         } else {
             fputc(c, f);
         }

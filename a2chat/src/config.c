@@ -5,8 +5,12 @@
 #include <ctype.h>
 
 struct a2cfg g_cfg;
+uint8_t g_stream_set;
 #ifndef A2CHAT_HOST
 char g_cfg_loaded[A2CHAT_PATH_MAX];
+/* Parser and loader sit in the NIC hole. nic_bringup overwrites them
+   after cfg_load_first returns. cfg_save and cfg_api_path stay resident. */
+#pragma code-name (push, "CFGINIT")
 #endif
 
 static void ascii7(char *s)
@@ -56,6 +60,7 @@ void cfg_defaults(struct a2cfg *c)
     c->maxwrite = 0xFFFFu;
     c->histcap = 0x7FFFu;
     c->stream = A2CHAT_STREAM_DEFAULT;
+    g_stream_set = 0;
 }
 
 void cfg_parse_line(struct a2cfg *c, const char *line)
@@ -106,12 +111,39 @@ void cfg_parse_line(struct a2cfg *c, const char *line)
         c->histcap = (uint16_t)atoi(val);
     } else if (keyeq(buf, "STREAM")) {
         c->stream = (uint8_t)(atoi(val) != 0);
+        g_stream_set = 1;
+    } else if (keyeq(buf, "API")) {
+        if (keyeq(val, "OPENAI") || keyeq(val, "LLAMA") ||
+            keyeq(val, "CPP") || keyeq(val, "LLAMACPP")) {
+            c->api = A2CHAT_API_OPENAI;
+        } else if (keyeq(val, "OLLA")) {
+            c->api = A2CHAT_API_OLLA;
+        } else if (keyeq(val, "OLLAMA")) {
+            c->api = A2CHAT_API_OLLAMA;
+        }
     }
 }
 
+#ifndef A2CHAT_HOST
+#pragma code-name (pop)
+#endif
+
+uint8_t g_api_lock;
+
 int cfg_is_olla(const struct a2cfg *c)
 {
-    return c != 0 && c->port == (uint16_t)A2CHAT_OLLA_PORT;
+    return c != 0 && c->api == A2CHAT_API_OLLA;
+}
+
+int cfg_use_openai(const struct a2cfg *c)
+{
+    uint8_t api;
+
+    if (!c) {
+        return 1;
+    }
+    api = c->api ? c->api : g_api_lock;
+    return api != A2CHAT_API_OLLAMA && api != A2CHAT_API_OLLA;
 }
 
 const char *cfg_api_path(const struct a2cfg *c, const char *suffix)
@@ -121,6 +153,12 @@ const char *cfg_api_path(const struct a2cfg *c, const char *suffix)
     if (!suffix) {
         suffix = "/api/chat";
     }
+    if (cfg_use_openai(c)) {
+        if (strcmp(suffix, "/api/tags") == 0) {
+            return "/v1/models";
+        }
+        return "/v1/chat/completions";
+    }
     if (cfg_is_olla(c)) {
         strcpy(path, "/olla/ollama");
         strcat(path, suffix);
@@ -128,6 +166,10 @@ const char *cfg_api_path(const struct a2cfg *c, const char *suffix)
     }
     return suffix;
 }
+
+#ifndef A2CHAT_HOST
+#pragma code-name (push, "CFGINIT")
+#endif
 
 static FILE *cfg_open(const char *path)
 {
@@ -231,6 +273,31 @@ int cfg_load_first(struct a2cfg *c)
 }
 #endif
 
+#ifndef A2CHAT_HOST
+#pragma code-name (pop)
+
+static void cfg_line_s(FILE *f, const char *key, const char *val)
+{
+    fputs(key, f);
+    if (val) {
+        fputs(val, f);
+    }
+    fputc('\r', f);
+}
+
+static void cfg_line_u(FILE *f, const char *key, unsigned val)
+{
+    char num[6];
+
+    fputs(key, f);
+    fmt_start(num, sizeof(num));
+    fmt_u(val);
+    fmt_end();
+    fputs(num, f);
+    fputc('\r', f);
+}
+#endif
+
 int cfg_save(const struct a2cfg *c, const char *path)
 {
     FILE *f = fopen(path, "w");
@@ -251,20 +318,34 @@ int cfg_save(const struct a2cfg *c, const char *path)
     fprintf(f, "MAXWRITE=%u\n", (unsigned)c->maxwrite);
     fprintf(f, "HISTCAP=%u\n", (unsigned)c->histcap);
     fprintf(f, "STREAM=%u\n", (unsigned)c->stream);
+    if (c->api == A2CHAT_API_OPENAI) {
+        fprintf(f, "API=OPENAI\n");
+    } else if (c->api == A2CHAT_API_OLLAMA) {
+        fprintf(f, "API=OLLAMA\n");
+    } else if (c->api == A2CHAT_API_OLLA) {
+        fprintf(f, "API=OLLA\n");
+    }
 #else
-    fprintf(f, "HOST=%s\r", c->host);
-    fprintf(f, "PORT=%u\r", (unsigned)c->port);
-    fprintf(f, "MODEL=%s\r", c->model);
-    fprintf(f, "SLOT=%u\r", (unsigned)c->slot);
-    fprintf(f, "IP=%s\r", c->ip);
-    fprintf(f, "GATEWAY=%s\r", c->gateway);
-    fprintf(f, "NETMASK=%s\r", c->netmask);
-    fprintf(f, "PREFIX=%s\r", c->prefix);
-    fprintf(f, "MAXHIST=%u\r", (unsigned)c->maxhist);
-    fprintf(f, "MAXREAD=%u\r", (unsigned)c->maxread);
-    fprintf(f, "MAXWRITE=%u\r", (unsigned)c->maxwrite);
-    fprintf(f, "HISTCAP=%u\r", (unsigned)c->histcap);
-    fprintf(f, "STREAM=%u\r", (unsigned)c->stream);
+    cfg_line_s(f, "HOST=", c->host);
+    cfg_line_u(f, "PORT=", c->port);
+    cfg_line_s(f, "MODEL=", c->model);
+    cfg_line_u(f, "SLOT=", c->slot);
+    cfg_line_s(f, "IP=", c->ip);
+    cfg_line_s(f, "GATEWAY=", c->gateway);
+    cfg_line_s(f, "NETMASK=", c->netmask);
+    cfg_line_s(f, "PREFIX=", c->prefix);
+    cfg_line_u(f, "MAXHIST=", c->maxhist);
+    cfg_line_u(f, "MAXREAD=", c->maxread);
+    cfg_line_u(f, "MAXWRITE=", c->maxwrite);
+    cfg_line_u(f, "HISTCAP=", c->histcap);
+    cfg_line_u(f, "STREAM=", c->stream);
+    if (c->api == A2CHAT_API_OPENAI) {
+        cfg_line_s(f, "API=OPENAI", "");
+    } else if (c->api == A2CHAT_API_OLLAMA) {
+        cfg_line_s(f, "API=OLLAMA", "");
+    } else if (c->api == A2CHAT_API_OLLA) {
+        cfg_line_s(f, "API=OLLA", "");
+    }
 #endif
     fclose(f);
     return 0;

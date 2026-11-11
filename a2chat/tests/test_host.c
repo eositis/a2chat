@@ -73,6 +73,39 @@ int main(void)
         return 1;
     }
 
+    /* llama.cpp streams OpenAI chunks. completion_tokens is the count. */
+    {
+        static const char sse[] =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n"
+            "data: {\"usage\":{\"completion_tokens\":4}}\n";
+        jsonscan_init(&j);
+        j.on_content = collect;
+        accn = 0;
+        acc[0] = 0;
+        jsonscan_feed_buf(&j, sse, (unsigned)(sizeof(sse) - 1));
+        if (strcmp(acc, "Hi") != 0 || j.eval_count != 4) {
+            fprintf(stderr, "llama sse '%s' tokens %u\n", acc, j.eval_count);
+            return 1;
+        }
+    }
+
+    /* This llama.cpp omits usage. The stop chunk still has predicted_n.
+     * prompt_n must not be taken as the reply length. */
+    {
+        static const char sse[] =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n"
+            "data: {\"timings\":{\"prompt_n\":12,\"predicted_n\":40}}\n";
+        jsonscan_init(&j);
+        j.on_content = collect;
+        accn = 0;
+        acc[0] = 0;
+        jsonscan_feed_buf(&j, sse, (unsigned)(sizeof(sse) - 1));
+        if (strcmp(acc, "Hi") != 0 || j.eval_count != 40) {
+            fprintf(stderr, "predicted_n '%s' tokens %u\n", acc, j.eval_count);
+            return 1;
+        }
+    }
+
     /* UTF-8 and \u escapes come out as ASCII, whether a sequence arrives
      * in one receive window or split across several. */
     {
@@ -148,8 +181,17 @@ int main(void)
         fprintf(stderr, "config case fail\n");
         return 1;
     }
+    g_api_lock = 0;
     cfg_parse_line(&c, "PORT=40114");
-    if (!cfg_is_olla(&c) ||
+    if (cfg_is_olla(&c) || !cfg_use_openai(&c) ||
+        strcmp(cfg_api_path(&c, "/api/chat"), "/v1/chat/completions") ||
+        strcmp(cfg_api_path(&c, "/api/tags"), "/v1/models")) {
+        fprintf(stderr, "port must not select API '%s'\n",
+                cfg_api_path(&c, "/api/chat"));
+        return 1;
+    }
+    cfg_parse_line(&c, "API=OLLA");
+    if (!cfg_is_olla(&c) || cfg_use_openai(&c) ||
         strcmp(cfg_api_path(&c, "/api/chat"), "/olla/ollama/api/chat") ||
         strcmp(cfg_api_path(&c, "/api/tags"), "/olla/ollama/api/tags")) {
         fprintf(stderr, "olla path fail '%s'\n", cfg_api_path(&c, "/api/chat"));
@@ -169,11 +211,37 @@ int main(void)
         fprintf(stderr, "stream=1 parse fail\n");
         return 1;
     }
+    cfg_parse_line(&c, "API=OPENAI");
     cfg_parse_line(&c, "PORT=11434");
-    if (cfg_is_olla(&c) || strcmp(cfg_api_path(&c, "/api/chat"), "/api/chat")) {
-        fprintf(stderr, "ollama path fail\n");
+    if (!cfg_use_openai(&c) ||
+        strcmp(cfg_api_path(&c, "/api/chat"), "/v1/chat/completions")) {
+        fprintf(stderr, "API=OPENAI path fail\n");
         return 1;
     }
+    cfg_parse_line(&c, "API=LLAMA");
+    if (!cfg_use_openai(&c) ||
+        strcmp(cfg_api_path(&c, "/api/chat"), "/v1/chat/completions")) {
+        fprintf(stderr, "API=LLAMA path fail\n");
+        return 1;
+    }
+    cfg_parse_line(&c, "API=OLLAMA");
+    cfg_parse_line(&c, "PORT=8080");
+    if (cfg_use_openai(&c) || strcmp(cfg_api_path(&c, "/api/chat"), "/api/chat")) {
+        fprintf(stderr, "API=OLLAMA path fail '%s'\n", cfg_api_path(&c, "/api/chat"));
+        return 1;
+    }
+    c.api = A2CHAT_API_AUTO;
+    g_api_lock = A2CHAT_API_OLLAMA;
+    if (cfg_use_openai(&c) || strcmp(cfg_api_path(&c, "/api/chat"), "/api/chat")) {
+        fprintf(stderr, "fallback lock failed\n");
+        return 1;
+    }
+    g_api_lock = 0;
+    if (!cfg_use_openai(&c)) {
+        fprintf(stderr, "auto should default to OpenAI\n");
+        return 1;
+    }
+    cfg_parse_line(&c, "API=OLLAMA");
     {
         FILE *cf = fopen("fixtures/cr.cfg", "wb");
         assert(cf);

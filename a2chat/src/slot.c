@@ -1,99 +1,86 @@
 #include "a2chat.h"
+#include "nic.h"
 #include <apple2.h>
 #include <stdint.h>
-#ifdef A2CHAT_COGS
-#include "cogs.h"
-#endif
 
-/* W5100 mode register: (slot << 4) | 0xC084 */
+unsigned char mf_present(void);
 
-#ifdef A2CHAT_COGS
-
-/* A Disk II controller's slot ROM: $Cn01=$20 $Cn03=$00 $Cn05=$03 $CnFF=$00.
- * Its $C0nX switches move the drive head, so never probe that slot. */
-static int is_disk2(uint8_t s)
+/* A Disk II controller's slot ROM. Its $C0nX switches move the head,
+ * so neither the CoGS ID read nor the W5100 probe may touch that slot. */
+int slot_is_disk2(uint8_t s)
 {
-    const volatile uint8_t *rom = (const uint8_t *)(0xC000 | (s << 8));
+    const volatile uint8_t *rom;
+
+    if (s < 1 || s > 7) {
+        return 1;
+    }
+    rom = (const uint8_t *)(0xC000 | (s << 8));
     return rom[1] == 0x20 && rom[3] == 0x00 && rom[5] == 0x03 &&
            rom[0xFF] == 0x00;
 }
 
-/* SLOT= wins. Otherwise look for the CoGS ID register ($C0n5 = $A2),
- * high slots first. 0 means not found. */
-uint8_t slot_resolve(uint8_t configured)
+/* Read-only CoGS ID: $C0n5 = $A2, version nonzero, status not $FF.
+ * Same test as cogs_probe, without loading the overlay. */
+static int cogs_id(uint8_t s)
+{
+    const volatile uint8_t *reg = (const uint8_t *)(0xC080 | (s << 4));
+
+    return reg[5] == 0xA2 && reg[6] != 0 && reg[1] != 0xFF;
+}
+
+uint8_t slot_megaflash(void)
+{
+    unsigned char rom;
+
+    /* Same machine test as clock_init. $FBC0 == $E0 is a IIe, where
+     * $C0C0 belongs to whatever card is in slot 4, not MegaFlash. */
+    if (*(volatile unsigned char *)0xFBB3 != 6 ||
+        *(volatile unsigned char *)0xFBC0 == 0xE0) {
+        return 0;
+    }
+    rom = *(volatile unsigned char *)0xFBBF;
+    if (rom != 4 && rom != 5) {
+        return 0;
+    }
+    if (!mf_present()) {
+        return 0;
+    }
+    return 4;
+}
+
+uint8_t slot_find_cogs(uint8_t configured)
 {
     uint8_t s;
+    uint8_t mf;
 
+    /* MegaFlash owns $C0C0 in slot 4. Do not ID-read that slot. */
+    mf = slot_megaflash();
     if (configured >= 1 && configured <= 7) {
-        return configured;
+        if (configured != mf && !slot_is_disk2(configured) &&
+            cogs_id(configured)) {
+            return configured;
+        }
+        return 0;
     }
     for (s = 7; s >= 1; s--) {
-        if (!is_disk2(s) && cogs_probe(s)) {
+        if (s == mf || slot_is_disk2(s)) {
+            continue;
+        }
+        if (cogs_id(s)) {
             return s;
         }
     }
     return 0;
 }
 
-#else /* A2CHAT_COGS */
-
-static int w5100_present(uint8_t slot)
+uint8_t slot_prefer_uther(void)
 {
-    volatile uint8_t *mode;
-    volatile uint8_t *addr_hi;
-    volatile uint8_t *addr_lo;
-    volatile uint8_t *data;
-    uint8_t saved;
-    uint8_t a, b;
+    unsigned ost = get_ostype();
 
-    if (slot < 1 || slot > 7) {
-        return 0;
-    }
-    mode = (uint8_t *)(slot << 4 | 0xC084);
-    addr_hi = mode + 1;
-    addr_lo = mode + 2;
-    data = mode + 3;
-
-    saved = *mode;
-    *mode = 0x03; /* indirect + auto increment */
-    *addr_hi = 0x00;
-    *addr_lo = 0x17; /* RTR, power-on value 0x07D0 */
-    (void)*addr_lo;
-    a = *data;
-    b = *data;
-    *mode = saved;
-    return (a == 0x07 && b == 0xD0);
-}
-
-uint8_t slot_resolve(uint8_t configured)
-{
-    uint8_t prefer;
-    uint8_t s;
-    unsigned ost;
-
-    if (configured >= 1 && configured <= 7) {
-        return configured;
-    }
-    ost = get_ostype();
     /* IIc MegaFlash and a IIgs Uthernet II are both usually slot 4.
      * An enhanced IIe still tries slot 3 first. */
     if (ost == APPLE_IIGS || (ost >= APPLE_IIC && ost < APPLE_IIGS)) {
-        prefer = 4;
-    } else {
-        prefer = 3;
+        return 4;
     }
-    if (w5100_present(prefer)) {
-        return prefer;
-    }
-    for (s = 1; s <= 7; s++) {
-        if (s == prefer) {
-            continue;
-        }
-        if (w5100_present(s)) {
-            return s;
-        }
-    }
-    return prefer; /* last resort: wget65 default-ish */
+    return 3;
 }
-
-#endif /* A2CHAT_COGS */

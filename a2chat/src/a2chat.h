@@ -6,17 +6,22 @@
 #include <stdio.h>
 #include <stddef.h>
 
-#define A2CHAT_BUILD 69
-/* make BUILD_TAG=c5 marks test builds: the help row then shows B69c5. */
+#define A2CHAT_BUILD 75
+/* Increment A2CHAT_BUILD, A2CHAT_BUILD_STR, and A2CHAT_DATE on every
+ * program change so the help row identifies the binary that is running.
+ * make BUILD_TAG=c5 marks test builds: the help row then shows B75c5. */
 #ifdef A2CHAT_BUILD_TAG
-#define A2CHAT_BUILD_STR "69" A2CHAT_BUILD_TAG
+#define A2CHAT_BUILD_STR "75" A2CHAT_BUILD_TAG
 #else
-#define A2CHAT_BUILD_STR "69"
+#define A2CHAT_BUILD_STR "75"
 #endif
 #define A2CHAT_VERSION "1.3"
-/* About date. Change this whenever A2CHAT_BUILD changes. */
-#define A2CHAT_DATE "8 October 2026"
-#define A2CHAT_OLLA_PORT 40114u
+#define A2CHAT_DATE "11 November 2026"
+/* API= does not follow the port. 0 discovers OpenAI, then Ollama. */
+#define A2CHAT_API_AUTO 0
+#define A2CHAT_API_OPENAI 1
+#define A2CHAT_API_OLLAMA 2
+#define A2CHAT_API_OLLA 3
 #define A2CHAT_PROMPT_MAX 0x2800u
 #define A2CHAT_PATH_MAX 48
 #define A2CHAT_LINE_MAX 251
@@ -39,16 +44,16 @@ struct a2cfg {
     uint16_t maxwrite;
     uint16_t histcap;
     uint8_t stream; /* STREAM=: 1 word by word, 0 whole reply at once */
+    uint8_t api; /* API=: 0 discover, 1 OpenAI, 2 Ollama, 3 Olla */
 };
 
-/* The CoGS card loses data once its 16 KB FIFO to the Apple fills, which a
- * streamed reply (about 140 bytes of JSON per word) easily does. A whole
- * reply in one JSON object is far smaller. */
-#ifdef A2CHAT_COGS
-#define A2CHAT_STREAM_DEFAULT 0
-#else
+/* 0 until a probe chooses. Not saved in A2CHAT.CFG. */
+extern uint8_t g_api_lock;
+
+/* Word by word until a NIC overlay says otherwise. The CoGS overlay's
+ * default is 0: that card drops data once its 16 KB FIFO fills. */
 #define A2CHAT_STREAM_DEFAULT 1
-#endif
+extern uint8_t g_stream_set;
 
 struct jsonscan {
     char win[A2CHAT_WIN];
@@ -119,6 +124,7 @@ int cfg_load_first(struct a2cfg *c);
 int cfg_save(const struct a2cfg *c, const char *path);
 void cfg_parse_line(struct a2cfg *c, const char *line);
 int cfg_is_olla(const struct a2cfg *c);
+int cfg_use_openai(const struct a2cfg *c);
 const char *cfg_api_path(const struct a2cfg *c, const char *suffix);
 
 /* jsonscan.c */
@@ -146,6 +152,15 @@ int bas_detokenize_aux(FILE *in, unsigned max, unsigned *got);
 
 #ifndef A2CHAT_HOST
 
+/* Bounded writer. Avoids the cc65 printf library in the resident binary. */
+void fmt_start(char *d, unsigned cap);
+void fmt_s(const char *s);
+void fmt_c(char c);
+void fmt_u(unsigned v);
+void fmt_pad(const char *s, unsigned width);
+void fmt_end(void);
+unsigned fmt_len(void);
+
 void ui_init(void);
 void ui_status(const char *msg);
 void ui_print(const char *s);
@@ -163,8 +178,6 @@ void ui_label(const char *s);
 void ui_clear_chat(void);
 void ui_exit(void);
 
-uint8_t slot_resolve(uint8_t configured);
-int net_init(uint8_t slot);
 void net_shutdown(void);
 void net_diag_ollama(void);
 
@@ -172,7 +185,8 @@ int http_post_aux(uint32_t addr, uint16_t port, const char *path,
                   uint16_t json_len,
                   void (*on_bytes)(const char *p, unsigned n, void *user),
                   void *user);
-int http_probe_tags(uint32_t addr, uint16_t port);
+int api_probe(uint32_t addr, uint16_t port);
+int api_prepare(uint32_t addr, uint16_t port);
 
 /* Aux $4000-$BFFF: 32K POST + answer staging. Copy routines live in LC. */
 #define A2CHAT_AUX_POST_MAX 0x8000u

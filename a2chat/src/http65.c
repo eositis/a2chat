@@ -1,17 +1,13 @@
 /******************************************************************************
- * HTTP/1.0 over the W5100 TCP socket. IP65 is used only before
- * w5100_config() (DHCP / static address). Do not call ip65_process here.
+ * HTTP/1.0 over the NIC overlay loaded at startup. The driver owns the
+ * socket. Do not call ip65_process from here.
  ******************************************************************************/
 
 #pragma static-locals (on)
 #pragma optimize (on)
 
 #include "a2chat.h"
-#include "w5100.h"
-#ifdef A2CHAT_COGS
-#include "cogs.h"
-#endif
-#include <ip65.h>
+#include "nic.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -119,6 +115,7 @@ static void feed_body(char ch)
 }
 
 static uint16_t rx_last;
+static uint8_t rx_closed;
 static char rxwin[64];
 
 uint16_t timer_jiffy(void);
@@ -156,95 +153,52 @@ static void feed_byte(char ch)
     feed_body(ch);
 }
 
-#ifdef A2CHAT_COGS
-/* CoGS: pop up to one window of the pending DATA payload from the card's
- * DATA register, then hand it to the header / body parser. */
+/* One window from the loaded driver. The driver commits or pops what it
+ * copies, so a short read leaves the rest for the next call. */
 static uint8_t pump_rx(void)
 {
-    uint16_t n;
+    uint8_t n;
     uint8_t i;
 
-    n = w5100_receive_request();
+    n = nic_recv((uint8_t *)rxwin, (uint8_t)sizeof(rxwin));
     if (!n) {
-        if (!w5100_connected()) {
-            rx_eof = 1;
+        if (nic_connected()) {
+            rx_closed = 0;
+            return 0;
         }
+        /* llama.cpp sends the reply and closes before the next poll.
+         * Sn_CR can still be busy, so the first size read is 0. */
+        if (rx_closed < 200) {
+            rx_closed++;
+            return 0;
+        }
+        rx_eof = 1;
         return 0;
     }
-    if (n > sizeof(rxwin)) {
-        n = sizeof(rxwin);
-    }
-    if (cogs_rx((uint8_t *)rxwin, (uint8_t)n)) {
-        rx_eof = 1;             /* card stalled; cogs_report() says so */
-        return 0;
-    }
+    rx_closed = 0;
     i = 0;
-    while (i < (uint8_t)n && !rx_have_hdr) {
+    while (i < n && !rx_have_hdr) {
         feed_byte(rxwin[i]);
         i++;
     }
-    if (i < (uint8_t)n) {
+    if (i < n) {
         if (rx_chunked || !rx_on_bytes) {
-            while (i < (uint8_t)n) {
+            while (i < n) {
                 feed_byte(rxwin[i]);
                 i++;
             }
         } else {
-            rx_on_bytes(rxwin + i, (unsigned)((uint8_t)n - i), rx_user);
+            rx_on_bytes(rxwin + i, (unsigned)(n - i), rx_user);
         }
     }
     return 1;
 }
-#else
-static uint8_t pump_rx(void)
-{
-    volatile uint8_t *data = w5100_data;
-    uint16_t n;
-    uint16_t i;
-    uint16_t filled;
-
-    n = w5100_receive_request();
-    if (!n) {
-        if (!w5100_connected()) {
-            rx_eof = 1;
-        }
-        return 0;
-    }
-    i = 0;
-    while (i < n && !rx_have_hdr) {
-        feed_byte((char)*data);
-        i++;
-    }
-    if (rx_chunked || !rx_on_bytes) {
-        while (i < n) {
-            feed_byte((char)*data);
-            i++;
-        }
-        w5100_receive_commit(n);
-        return 1;
-    }
-    filled = 0;
-    while (i < n) {
-        if (filled == sizeof(rxwin)) {
-            rx_on_bytes(rxwin, filled, rx_user);
-            filled = 0;
-        }
-        rxwin[filled++] = (char)*data;
-        i++;
-    }
-    w5100_receive_commit(n);
-    if (filled) {
-        rx_on_bytes(rxwin, (unsigned)filled, rx_user);
-    }
-    return 1;
-}
-
-#endif /* A2CHAT_COGS */
 
 static void rx_reset(void (*on_bytes)(const char *p, unsigned n, void *user),
                      void *user, char *accum, uint16_t accum_max)
 {
     rx_eof = 0;
+    rx_closed = 0;
     rx_have_hdr = 0;
     rx_chunked = 0;
     rx_chunk_st = 0;
@@ -263,49 +217,10 @@ static void rx_reset(void (*on_bytes)(const char *p, unsigned n, void *user),
     }
 }
 
-#ifdef A2CHAT_COGS
 static int send_all(const uint8_t *p, uint16_t len)
 {
-    if (ui_aborted()) {
-        w5100_disconnect();
-        return -1;
-    }
-    return cogs_send(p, len);
+    return nic_send(p, len);
 }
-#else
-static int send_all(const uint8_t *p, uint16_t len)
-{
-    volatile uint8_t *data = w5100_data;
-
-    while (len) {
-        uint16_t snd;
-        uint16_t i;
-
-        if (ui_aborted()) {
-            w5100_disconnect();
-            return -1;
-        }
-        snd = w5100_send_request();
-        if (!snd) {
-            if (!w5100_connected()) {
-                return -1;
-            }
-            continue;
-        }
-        if (snd > len) {
-            snd = len;
-        }
-        for (i = 0; i < snd; i++) {
-            *data = p[i];
-        }
-        p += snd;
-        len = (uint16_t)(len - snd);
-        w5100_send_commit(snd);
-    }
-    return 0;
-}
-
-#endif /* A2CHAT_COGS */
 
 static int send_aux(uint16_t off, uint16_t total)
 {
@@ -335,7 +250,7 @@ static int wait_done(void)
     rx_last = timer_jiffy();
     while (!rx_eof) {
         if (ui_aborted()) {
-            w5100_disconnect();
+            nic_disconnect();
             strcpy(g_http_err, "recv aborted");
             return -1;
         }
@@ -343,12 +258,12 @@ static int wait_done(void)
             rx_last = timer_jiffy();
         } else if ((uint16_t)(timer_jiffy() - rx_last) > 45000u) {
             /* ~45s of vertical blanks with no TCP payload. */
-            w5100_disconnect();
+            nic_disconnect();
             strcpy(g_http_err, "recv timeout");
             return -1;
         }
     }
-    w5100_disconnect();
+    nic_disconnect();
     return 0;
 }
 
@@ -357,8 +272,18 @@ static int finish_status(void)
     int st;
 
     if (!rx_have_hdr) {
-        strcpy(g_http_err, "TCP up, no HTTP reply");
-        return -1;
+        /* Status line arrived, but the blank line that ends the headers
+         * was still in the W5100 buffer when the peer closed. */
+        if (rx_hdr[0] == 'H' && rx_hdr[1] == 'T' &&
+            rx_hdr[2] == 'T' && rx_hdr[3] == 'P') {
+            rx_have_hdr = 1;
+        } else {
+            fmt_start(g_http_err, sizeof(g_http_err));
+            fmt_s("no HTTP ");
+            fmt_u(rx_hlen);
+            fmt_end();
+            return -1;
+        }
     }
     st = http_status_code(rx_hdr);
     if (st < 200 || st > 299) {
@@ -386,15 +311,19 @@ int http_post_aux(uint32_t addr, uint16_t port, const char *url_path,
         return -1;
     }
 
-    hlen = (uint16_t)sprintf(hdr,
-            "POST %s HTTP/1.0\r\n"
-            "Host: %s:%u\r\n"
-            "Content-Type: application/json\r\n"
-            "Content-Length: %u\r\n"
-            "Connection: close\r\n"
-            "\r\n",
-            url_path, g_cfg.host, (unsigned)port, (unsigned)json_len);
-    if (hlen >= 160) {
+    fmt_start(hdr, 160);
+    fmt_s("POST ");
+    fmt_s(url_path);
+    fmt_s(" HTTP/1.0\r\nHost: ");
+    fmt_s(g_cfg.host);
+    fmt_c(':');
+    fmt_u(port);
+    fmt_s("\r\nContent-Type: application/json\r\nContent-Length: ");
+    fmt_u(json_len);
+    fmt_s("\r\nConnection: close\r\n\r\n");
+    fmt_end();
+    hlen = (uint16_t)fmt_len();
+    if (hlen >= 159) {
         strcpy(g_http_err, "headers too long");
         return -1;
     }
@@ -406,12 +335,12 @@ int http_post_aux(uint32_t addr, uint16_t port, const char *url_path,
     }
     ui_status(url_path);
     if (send_str(hdr) != 0) {
-        w5100_disconnect();
+        nic_disconnect();
         strcpy(g_http_err, "send hdr");
         return -1;
     }
     if (send_aux(0, json_len) != 0) {
-        w5100_disconnect();
+        nic_disconnect();
         strcpy(g_http_err, "send aux");
         return -1;
     }
@@ -426,10 +355,13 @@ int http_post_aux(uint32_t addr, uint16_t port, const char *url_path,
     return rc;
 }
 
-/* W5100 RCR makes one connect about 30 seconds. Two retries after that. */
+/* One try is about 30 seconds on the W5100. Two retries after that.
+ * The loaded driver can refuse a retry (DNS failure, connection refused). */
 static int connect_30(uint32_t addr, uint16_t port)
 {
     uint8_t try;
+    uint8_t code;
+    const char *why;
 
     for (try = 0; try < 3; try++) {
         if (ui_aborted()) {
@@ -437,55 +369,51 @@ static int connect_30(uint32_t addr, uint16_t port)
             return -1;
         }
         ui_status(try ? "Retry connect..." : "Connecting...");
-#ifdef A2CHAT_COGS
-        /* The card resolves names itself, so HOST= may be a hostname. */
-        (void)addr;
-        if (w5100_connect_name(g_cfg.host, (uint8_t)strlen(g_cfg.host),
-                               port)) {
+        if (nic_connect(addr, g_cfg.host, port) == 0) {
             return 0;
         }
-        w5100_disconnect();
-        {
-            uint8_t e = cogs_last_error();
-            /* DNS failures and refusals will not fix themselves. */
-            if (e == 2 || e == 4 || e == 1) {
-                break;
-            }
+        nic_disconnect();
+        if (!nic_should_retry()) {
+            break;
         }
-#else
-        if (w5100_connect_addr(addr, port)) {
-            return 0;
-        }
-        w5100_disconnect();
-#endif
     }
-#ifdef A2CHAT_COGS
-    if (cogs_last_error()) {
-        sprintf(g_http_err, "TCP: %s",
-                cogs_strerror(cogs_last_error()));
+    code = nic_last_error();
+    why = code ? nic_strerror(code) : 0;
+    if (why && why[0]) {
+        fmt_start(g_http_err, sizeof(g_http_err));
+        fmt_s("TCP: ");
+        fmt_s(why);
+        fmt_end();
         return -1;
     }
-#endif
     strcpy(g_http_err, "TCP connect failed");
     return -1;
 }
 
-int http_probe_tags(uint32_t addr, uint16_t port)
+static int http_get(uint32_t addr, uint16_t port, const char *path)
 {
     g_http_err[0] = 0;
     rx_reset(0, 0, 0, 0);
     if (connect_30(addr, port)) {
         return -1;
     }
-    sprintf(hdr,
-            "GET %s HTTP/1.0\r\n"
-            "Host: %s:%u\r\n"
-            "Connection: close\r\n"
-            "\r\n",
-            cfg_api_path(&g_cfg, "/api/tags"), g_cfg.host, (unsigned)port);
-    ui_status(cfg_api_path(&g_cfg, "/api/tags"));
+    fmt_start(hdr, 160);
+    fmt_s("GET ");
+    fmt_s(path);
+    fmt_s(" HTTP/1.0\r\nHost: ");
+    fmt_s(g_cfg.host);
+    fmt_c(':');
+    fmt_u(port);
+    fmt_s("\r\nConnection: close\r\n\r\n");
+    fmt_end();
+    if (fmt_len() >= 159) {
+        nic_disconnect();
+        strcpy(g_http_err, "headers too long");
+        return -1;
+    }
+    ui_status(path);
     if (send_str(hdr) < 0) {
-        w5100_disconnect();
+        nic_disconnect();
         strcpy(g_http_err, "TCP up, send failed");
         return -1;
     }
@@ -493,4 +421,66 @@ int http_probe_tags(uint32_t addr, uint16_t port)
         return -1;
     }
     return finish_status();
+}
+
+static int http_missing(void)
+{
+    const char *p = g_http_err;
+
+    while (*p) {
+        if (p[0] == '4' && p[1] == '0' && p[2] == '4') {
+            return 1;
+        }
+        p++;
+    }
+    return 0;
+}
+
+/* OpenAI first. A 404 means this server does not have that path, so try
+ * Ollama. A TCP failure is the same for both and is not retried. */
+int api_probe(uint32_t addr, uint16_t port)
+{
+    int rc;
+
+    if (g_cfg.api == A2CHAT_API_OLLAMA || g_cfg.api == A2CHAT_API_OLLA) {
+        g_api_lock = g_cfg.api;
+        return http_get(addr, port, cfg_api_path(&g_cfg, "/api/tags"));
+    }
+    if (g_cfg.api == A2CHAT_API_OPENAI) {
+        g_api_lock = A2CHAT_API_OPENAI;
+        return http_get(addr, port, cfg_api_path(&g_cfg, "/api/tags"));
+    }
+    if (g_api_lock) {
+        return http_get(addr, port, cfg_api_path(&g_cfg, "/api/tags"));
+    }
+    rc = http_get(addr, port, "/v1/models");
+    if (rc == 0) {
+        g_api_lock = A2CHAT_API_OPENAI;
+        ui_print("API OpenAI");
+        ui_nl();
+        return 0;
+    }
+    if (rc != -2 || !http_missing()) {
+        return rc;
+    }
+    ui_status("Trying Ollama...");
+    rc = http_get(addr, port, "/api/tags");
+    if (rc == 0) {
+        g_api_lock = A2CHAT_API_OLLAMA;
+        ui_print("API Ollama");
+        ui_nl();
+    }
+    return rc;
+}
+
+int api_prepare(uint32_t addr, uint16_t port)
+{
+    if (g_cfg.api != A2CHAT_API_AUTO) {
+        g_api_lock = g_cfg.api;
+        return 0;
+    }
+    if (g_api_lock) {
+        return 0;
+    }
+    return api_probe(addr, port);
 }
