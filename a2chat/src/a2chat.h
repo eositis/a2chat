@@ -6,14 +6,14 @@
 #include <stdio.h>
 #include <stddef.h>
 
-#define A2CHAT_BUILD 76
+#define A2CHAT_BUILD 77
 /* Increment A2CHAT_BUILD, A2CHAT_BUILD_STR, and A2CHAT_DATE on every
  * program change so the help row identifies the binary that is running.
- * make BUILD_TAG=c5 marks test builds: the help row then shows B76c5. */
+ * make BUILD_TAG=c5 marks test builds: the help row then shows B77c5. */
 #ifdef A2CHAT_BUILD_TAG
-#define A2CHAT_BUILD_STR "76" A2CHAT_BUILD_TAG
+#define A2CHAT_BUILD_STR "77" A2CHAT_BUILD_TAG
 #else
-#define A2CHAT_BUILD_STR "76"
+#define A2CHAT_BUILD_STR "77"
 #endif
 #define A2CHAT_VERSION "1.4"
 #define A2CHAT_DATE "11 November 2026"
