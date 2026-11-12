@@ -2,22 +2,13 @@
 
 ## Don't block startup on an unreachable server
 
-On launch, `main.c` calls `net_diag_ollama()`, which runs `api_probe()`
-against `HOST=`/`PORT=`: a `GET /v1/models`, then `GET /api/tags` if that
-is a 404 (or just one of them for a forced `API=`). Fresh disks ship with
-`HOST=192.168.1.10`, so on most networks that probe has nothing to reach, and
-the user waits through `connect_30()` before getting the prompt: three connect
-tries, about 30 seconds each on the W5100, and on CoGS whatever the card's own
-connect timeout is (with a 45-second guard in `cogs.c`). Changing `HOST=` is
-only possible once that finishes. Ctrl-C cuts each try short, but nothing on
-screen says so.
+Done: the startup check (`net_diag_ollama()` from `main.c`) makes one
+connect try instead of three, prints `Server check: Ctrl-C skips`, and on a
+connect failure points at `/config`. `/ping` and chats still try three
+times; the first chat repeats API discovery if the startup check failed.
 
-Ideas:
-
-- Skip the startup probe entirely and let `/ping` (or the first chat) find out.
-- Or probe once, with no retries, and say plainly that a key skips it.
-- Ship the sample `A2CHAT.CFG` with `HOST=` empty and prompt for it on first
-  run, instead of a guessed address.
+Still open: ship the sample `A2CHAT.CFG` with `HOST=` empty and prompt for
+it on first run, instead of a guessed address.
 
 ## Model picker from `/api/tags`
 

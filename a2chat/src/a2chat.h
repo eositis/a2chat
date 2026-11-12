@@ -180,6 +180,8 @@ void ui_exit(void);
 
 void net_shutdown(void);
 void net_diag_ollama(void);
+/* Set before net_diag_ollama(): one connect try, not three (startup). */
+extern uint8_t g_connect_once;
 
 int http_post_aux(uint32_t addr, uint16_t port, const char *path,
                   uint16_t json_len,

@@ -357,13 +357,15 @@ int http_post_aux(uint32_t addr, uint16_t port, const char *url_path,
 
 /* One try is about 30 seconds on the W5100. Two retries after that.
  * The loaded driver can refuse a retry (DNS failure, connection refused). */
+uint8_t g_connect_once;
+
 static int connect_30(uint32_t addr, uint16_t port)
 {
     uint8_t try;
     uint8_t code;
     const char *why;
 
-    for (try = 0; try < 3; try++) {
+    for (try = 0; try < (g_connect_once ? 1 : 3); try++) {
         if (ui_aborted()) {
             strcpy(g_http_err, "recv aborted");
             return -1;
