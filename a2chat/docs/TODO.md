@@ -2,13 +2,15 @@
 
 ## Don't block startup on an unreachable server
 
-On launch, `main.c` calls `net_diag_ollama()`, which runs `http_probe_tags()`
-(a `GET /api/tags`) against `HOST=`/`PORT=`. Fresh disks ship with
+On launch, `main.c` calls `net_diag_ollama()`, which runs `api_probe()`
+against `HOST=`/`PORT=`: a `GET /v1/models`, then `GET /api/tags` if that
+is a 404 (or just one of them for a forced `API=`). Fresh disks ship with
 `HOST=192.168.1.10`, so on most networks that probe has nothing to reach, and
 the user waits through `connect_30()` before getting the prompt: three connect
 tries, about 30 seconds each on the W5100, and on CoGS whatever the card's own
 connect timeout is (with a 45-second guard in `cogs.c`). Changing `HOST=` is
-only possible once that finishes.
+only possible once that finishes. Ctrl-C cuts each try short, but nothing on
+screen says so.
 
 Ideas:
 
@@ -19,13 +21,15 @@ Ideas:
 
 ## Model picker from `/api/tags`
 
-`MODEL=` has to match an installed Ollama model exactly, tag included:
+`MODEL=` has to match an installed model exactly, tag included:
 `gpt-oss` fails when only `gpt-oss:20b` is installed, because Ollama reads a
 bare name as `name:latest`.
 
 Ollama's `GET /api/tags` lists the installed models (`"name"` fields in a
-`models` array). A2CHAT already sends that request in `http_probe_tags()` but
-only checks the HTTP status and discards the body. Instead:
+`models` array), and OpenAI-style servers answer `GET /v1/models` (`"id"`
+fields in a `data` array). A2CHAT already sends one of these in
+`api_probe()` but only checks the HTTP status and discards the body.
+Instead:
 
 - Pull the `"name"` values out of the reply with the existing `jsonscan`
   code, keeping a short list (memory is tight, so cap the count and length).
@@ -35,10 +39,11 @@ only checks the HTTP status and discards the body. Instead:
 - When `MODEL=` is not in the list, say so at startup or on `/ping` and
   suggest the closest match (for example `gpt-oss` → `gpt-oss:20b`).
 
-Memory is tight. As of build c8 both builds have about 300 bytes free below
-`$BA00`, so keep the model list in
-aux memory or in the idle receive buffer rather than in main-memory BSS,
-and check both builds' `a2chat.map` after the change.
+Memory is tight. In 1.4 (build 77) main-memory BSS ends at `$A189`, about
+250 bytes below the network driver hole at `$A280`, so keep the model list
+in aux memory or in the idle receive buffer rather than in main-memory BSS,
+and check `a2chat.map` after the change. The driver hole has about
+330 bytes free with `A2CHAT.UTH` loaded and 1.3 KB with `A2CHAT.COG`.
 
 ## Clock shows `JIFFY`
 
@@ -54,7 +59,7 @@ Otherwise it falls back to counting vertical blanks (`ip65_timer.s`, about
 16 ms per frame), which can time things but can't tell the time of day, hence
 `--:--`. To look into:
 
-- Done for CoGS in build c8 (works on a real card): `cogs_wall()` in
+- Done for CoGS (works on a real card): `cogs_wall()` in
   `clock.c` reads the card's `LOCALTIME` when no socket is open and sets the
   ProDOS date and time. The timezone comes from the card's own settings.
 - Whether the vertical-blank counter is right on every machine A2CHAT
