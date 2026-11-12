@@ -78,19 +78,13 @@ static uint8_t  n_err;       /* ERROR events for our socket */
 static uint8_t  n_resync;    /* times the FIFOs were reset */
 static uint16_t n_drop;      /* our DATA payload bytes thrown away */
 static uint8_t  n_bad;       /* frames with an opcode a card never sends */
-static uint8_t  n_irq;       /* times we found IRQs enabled */
-static uint32_t n_rx;        /* our DATA payload bytes read */
 static uint16_t q_peak;      /* most card->host bytes queued at once */
-static uint16_t t_open;      /* timer_jiffy() when the socket opened */
-static uint16_t t_last;      /* timer_jiffy() at the last payload read */
 
 /* Disk I/O between requests can leave IRQs on. Keep them off while we
- * own the FIFO, and count how often they were found on. */
+ * own the FIFO. */
 static void irq_off(void)
 {
-    if (cogs_irq_off() && n_irq < 255) {
-        ++n_irq;
-    }
+    cogs_irq_off();
 }
 
 const char *cogs_strerror(uint8_t code)
@@ -382,8 +376,8 @@ bool w5100_connect_name(const char *name, uint8_t length, uint16_t port)
 {
     uint8_t pre[5];
     uint16_t t0;
-    uint8_t irq_was_on = cogs_irq_off();
 
+    cogs_irq_off();
     if (st != S_CLOSED) {
         w5100_disconnect();
     }
@@ -397,8 +391,6 @@ bool w5100_connect_name(const char *name, uint8_t length, uint16_t port)
     n_resync = 0;
     n_drop = 0;
     n_bad = 0;
-    n_irq = irq_was_on;
-    n_rx = 0;
     q_peak = 0;
     rx_left = 0;
     tx_unacked = 0;
@@ -413,9 +405,6 @@ bool w5100_connect_name(const char *name, uint8_t length, uint16_t port)
     t0 = timer_jiffy();
     while (st == S_CONNECTING) {
         poll_one();
-        if (st == S_OPEN) {
-            t_open = t_last = timer_jiffy();
-        }
         if (input_check_for_abort_key()) {
             w5100_disconnect();
             return false;
@@ -512,8 +501,6 @@ uint8_t cogs_rx(uint8_t *dst, uint8_t n)
         return 1;
     }
     rx_left = (uint16_t)(rx_left - n);
-    n_rx += n;
-    t_last = timer_jiffy();
     return 0;
 }
 
@@ -524,56 +511,25 @@ void w5100_data_commit(bool do_send, uint16_t size)
     }
 }
 
-static void put_u32(unsigned long v)
-{
-    char tmp[10];
-    uint8_t n = 0;
-
-    do {
-        tmp[n++] = (char)('0' + (uint8_t)(v % 10ul));
-        v /= 10ul;
-    } while (v && n < sizeof(tmp));
-    while (n) {
-        fmt_c(tmp[--n]);
-    }
-}
-
 void cogs_report(void)
 {
     char msg[80];
-    uint16_t dt;
+    uint8_t full = q_peak >= COGS_FIFO_SIZE;
 
-    /* Always shown while CoGS support is being tested. */
-    dt = (uint16_t)(t_last - t_open);
+    if (!n_err && !n_resync && !n_drop && !n_bad && !full) {
+        return;
+    }
     fmt_start(msg, sizeof(msg));
-    fmt_s("CoGS B");
-    fmt_s(A2CHAT_BUILD_STR);
-    fmt_s(": ");
-    put_u32(n_rx);
-    fmt_s(" bytes in ");
-    fmt_u(dt / 1000u);
-    fmt_c('.');
-    fmt_u((dt % 1000u) / 100u);
-    fmt_s("s, peak queue ");
-    fmt_u(q_peak);
-    fmt_end();
-    ui_nl();
-    ui_print(msg);
-    ui_nl();
-    fmt_start(msg, sizeof(msg));
-    fmt_s("  err ");
+    fmt_s("CoGS: err ");
     fmt_u(n_err);
-    fmt_s(" (");
-    fmt_s(n_err ? "see below" : "-");
-    fmt_s(") resync ");
+    fmt_s(" resync ");
     fmt_u(n_resync);
     fmt_s(" drop ");
     fmt_u(n_drop);
     fmt_s(" bad ");
     fmt_u(n_bad);
-    fmt_s(" irq ");
-    fmt_u(n_irq);
     fmt_end();
+    ui_nl();
     ui_print(msg);
     ui_nl();
     if (n_err) {
@@ -581,7 +537,7 @@ void cogs_report(void)
         ui_print(cogs_strerror(last_err));
         ui_nl();
     }
-    if (q_peak >= COGS_FIFO_SIZE) {
+    if (full) {
         /* The card drops socket data once its FIFO fills (contrary to
          * the reference, which promises TCP flow control instead). */
         ui_print("  Card buffer filled: this reply may be damaged.");
