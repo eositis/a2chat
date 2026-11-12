@@ -1,10 +1,10 @@
 # A2CHAT
 
-Native **ProDOS 8** chat client for an enhanced **Apple IIe** or **Apple IIc** with **Uthernet II** (WIZnet W5100). It talks **HTTP directly** to [Ollama](https://ollama.com) on the LAN, streams replies in 80-column text, and can save notes or listings onto a ProDOS volume.
-
-Current release: **version 1.1** (help row **38**).
+Native **ProDOS 8** chat client for an enhanced **Apple IIe** or **Apple IIc** with an **Uthernet II** (WIZnet W5100) or **CoGS** network card. It talks **HTTP directly** to [Ollama](https://ollama.com) on the LAN, streams replies in 80-column text, and can save notes or listings onto a ProDOS volume.
 
 **Using it on the Apple:** [USERGUIDE.md](USERGUIDE.md) (hardware, disk install, config, commands, saving files, troubleshooting).
+
+**CoGS card:** [COGS.md](COGS.md) (setup, differences from Uthernet II, streaming caveat).
 
 **Performance and measured runs:** [PERFORMANCE.md](PERFORMANCE.md).
 
@@ -16,9 +16,21 @@ This file is the build and developer overview.
 
 ## Hardware
 
+One binary drives either card. At startup A2CHAT looks for a CoGS card first (ID register `$C0n5 = $A2`, Disk II slots skipped); if it finds one it loads `A2CHAT.COG`, otherwise it loads `A2CHAT.UTH` and probes for a W5100. Both drivers are overlays loaded below `$BA00`, so both files must be on the disk.
+
+**Uthernet II:**
+
 - **IIe:** Uthernet II in any slot. Auto-scan tries **slot 3 first**, then 1–7. Accelerators often move the card off slot 3 — set `SLOT=` in config if probe is wrong.
 - **IIc / IIc+:** requires **MegaFlash**, which exposes Uthernet II in **slot 4**. Auto-scan tries 4 first. A stock IIc without MegaFlash cannot run the network path.
-- 65C02, 80-column firmware, ProDOS 8. 128K required for aux POST/answer staging.
+
+**CoGS:**
+
+- Any slot of a IIe or IIgs; the scan goes from slot 7 down. `SLOT=` overrides it.
+- The card does DHCP, DNS and TCP, so `IP=` / `GATEWAY=` / `NETMASK=` are ignored and `HOST=` may be a hostname. Set addressing and the timezone on the card's own config screen.
+- With no ProDOS or MegaFlash clock, the time comes from the card.
+- Replies default to `STREAM=0` until the card's flow-control firmware fix is out; see [COGS.md](COGS.md).
+
+**Both:** 65C02, 80-column firmware, ProDOS 8. 128K required for aux POST/answer staging.
 
 ## Build
 
@@ -43,12 +55,14 @@ Host-side parser tests (no Apple II required):
 make host-test
 ```
 
-`make disk` rebuilds only the 140K image. `make hd` rebuilds the 8MB image. Both volumes are `/A2CHAT/` with `PRODOS`, `A2CHAT.SYSTEM` (cc65 loader), `A2CHAT` (BIN at `$0803`), sample `A2CHAT.CFG`, `A2CHAT.TXT`, and `A2SOFT.TXT`. With no `BASIC.SYSTEM`, ProDOS starts `A2CHAT.SYSTEM` on boot. Restore your real `HOST` / `MODEL` / `PREFIX` (and your edited prompt files) after each image rebuild.
+`make disk` rebuilds only the 140K image. `make hd` rebuilds the 8MB image. Both volumes are `/A2CHAT/` with `PRODOS`, `A2CHAT.SYSTEM` (cc65 loader), `A2CHAT` (BIN at `$0803`), the network drivers `A2CHAT.UTH` and `A2CHAT.COG`, sample `A2CHAT.CFG`, `A2CHAT.TXT`, and `A2SOFT.TXT`. With no `BASIC.SYSTEM`, ProDOS starts `A2CHAT.SYSTEM` on boot. Restore your real `HOST` / `MODEL` / `PREFIX` (and your edited prompt files) after each image rebuild.
 
 Manual AppleCommander layout (wget65-style):
 
 - `A2CHAT.SYSTEM` — SYS loader
 - `A2CHAT` — BIN (`-as` AppleSingle from `a2chat.bin`)
+- `A2CHAT.UTH` — BIN (Uthernet II driver overlay)
+- `A2CHAT.COG` — BIN (CoGS driver overlay)
 - `A2CHAT.CFG` — TXT
 - `A2CHAT.TXT` — TXT (short system prompt)
 - `A2SOFT.TXT` — TXT (Applesoft reference)
@@ -61,7 +75,7 @@ Ollama must listen on the LAN, not only localhost:
 export OLLAMA_HOST=0.0.0.0:11434
 ```
 
-then restart Ollama. `HOST=` in `A2CHAT.CFG` is the Mac/PC **dotted IPv4** (v1 has no DNS unless AppleWin’s virtual W5100 DNS offload is present). Pull a model, e.g. `ollama pull llama3.2:3b`.
+then restart Ollama. With an Uthernet II, `HOST=` in `A2CHAT.CFG` is the Mac/PC **dotted IPv4** (no DNS unless AppleWin’s virtual W5100 DNS offload is present). With a CoGS card it may also be a hostname. Pull a model, e.g. `ollama pull llama3.2:3b`.
 
 ## Olla (`PORT=40114`)
 
@@ -79,16 +93,16 @@ Set `PORT=40114` (or `/config`) and keep `HOST=` as the machine running Olla. Op
 
 | Key | Meaning |
 |-----|---------|
-| `HOST` | Ollama IPv4 |
+| `HOST` | server IPv4; with CoGS, also a hostname (31 chars max) |
 | `PORT` | `11434` Ollama, or `40114` Olla (`/olla/ollama/api/...`) |
 | `MODEL` | model name |
-| `SLOT` | `0` = auto (IIc and IIgs try slot 4, IIe tries slot 3); or a slot number 1–7 |
-| `IP` / `GATEWAY` / `NETMASK` | empty = DHCP (IP65); filled = static |
+| `SLOT` | `0` = auto (a CoGS card is looked for in slots 7–1 first; then for Uthernet II, IIc and IIgs try slot 4, IIe tries slot 3); or a slot number 1–7 |
+| `IP` / `GATEWAY` / `NETMASK` | Uthernet II only: empty = DHCP (IP65); filled = static. CoGS ignores them |
 | `PREFIX` | data directory for `A2CHAT.LOG` and default for `/cat` (e.g. `/A2.DESKTOP/A2CHAT`). Empty = folder the program was launched from. |
 | `MAXHIST` | bytes of log spliced into each POST |
 | `MAXREAD` / `MAXWRITE` | file I/O caps |
 | `HISTCAP` | compact `A2CHAT.LOG` when larger |
-| `STREAM` | 1 = show replies word by word, 0 = wait for the whole reply; default 1 (Uthernet II), 0 (CoGS) |
+| `STREAM` | 1 = show replies word by word, 0 = wait for the whole reply. Unset: 1 on Uthernet II, 0 on CoGS |
 
 Chat POST is staged in 32K aux RAM, not a scratch BOD file. Disk is still slow for `/save` and `/read` of large files.
 
