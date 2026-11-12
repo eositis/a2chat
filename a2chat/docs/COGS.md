@@ -39,8 +39,9 @@ streams it even with `"think":false`), and the Apple parses it at roughly
 The CoGS build therefore defaults to `STREAM=0`: Ollama sends one JSON
 object when the reply is finished, typically a few KB. Set `STREAM=1` in
 `A2CHAT.CFG` once the card's firmware applies flow control as documented.
-After each reply the CoGS build prints the bytes received and the peak FIFO
-backlog, and warns if the FIFO filled.
+If a reply had card errors, resyncs or dropped data, or filled the FIFO,
+the CoGS build prints a one-line summary after it and warns that the reply
+may be damaged. A clean reply prints nothing extra.
 
 ## Files
 
