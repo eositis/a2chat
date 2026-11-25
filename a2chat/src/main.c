@@ -87,7 +87,9 @@ int main(int argc, char *argv[])
         ui_print(t);
     }
     ui_nl();
+    g_connect_once = 1;
     net_diag_ollama();
+    g_connect_once = 0;
 #ifndef A2CHAT_HOST
     __asm__("cld");
     __asm__("sei");

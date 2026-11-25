@@ -32,11 +32,21 @@ void net_diag_ollama(void)
     if (g_cfg.api == A2CHAT_API_AUTO) {
         g_api_lock = 0;
     }
+    /* At startup an unreachable HOST= should not hold up the prompt:
+     * one try, and say how to skip it. The first chat probes again. */
+    if (g_connect_once) {
+        ui_print("Server check: Ctrl-C skips");
+        ui_nl();
+    }
     rc = api_probe(addr, g_cfg.port);
     ui_redraw_chrome();
     if (rc < 0) {
         ui_print(g_http_err[0] ? g_http_err : "TCP connect failed");
         ui_nl();
+        if (rc == -1) {
+            ui_print("/config sets HOST=");
+            ui_nl();
+        }
         return;
     }
     ui_print("Connection established");

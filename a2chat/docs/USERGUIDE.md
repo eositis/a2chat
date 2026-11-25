@@ -58,7 +58,7 @@ Edit `A2CHAT.CFG` with any ProDOS text editor, or from inside A2CHAT with `/conf
 1. Boot the volume. You should get 80-column A2CHAT, not Applesoft.
 2. The top inverse bar shows host, port, model, slot, and `Conn` or `----`. After a reply it shows the token count (for example `31 tokens`).
 3. Startup prints the config path, the data directory, **Clock P8** (or `MFMS` / `COGS` / `JIFFY`), wall time, the Apple IP, and an Ollama probe.
-4. **Connection established** means HTTP reached Ollama. If the first connect does not finish in about 30 seconds, A2CHAT retries twice.
+4. **Connection established** means HTTP reached the server. At startup A2CHAT tries once (about 30 seconds on an Uthernet II if nothing answers) and prints `Server check: Ctrl-C skips`; press Ctrl-C to go straight to the prompt. If the check fails, fix `HOST=` with `/config`. `/ping` and chats try up to three times.
 5. Type a question and press Return, or type a slash command from the help row.
 
 If Ethernet fails, A2CHAT continues **offline**. `/cat`, `/config`, `/about`, `/quit`, and similar still work; chat will not.
